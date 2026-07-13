@@ -15,8 +15,7 @@
   "types": "./dist/index.d.ts",
   "repository": {
     "type": "git",
-    "url": "https://github.com/mzdbxqh/agent-method-registry.git",
-    "directory": "packages/agent-method-registry"
+    "url": "https://github.com/mzdbxqh/agent-method-registry.git"
   },
   "bugs": {
     "url": "https://github.com/mzdbxqh/agent-method-registry/issues"
