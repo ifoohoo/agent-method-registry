@@ -1,0 +1,88 @@
+{
+  "schemaVersion": 1,
+  "inputs": {
+    "catalogs": [
+      {
+        "id": "artifact-chain-assistant",
+        "version": "0.2.0",
+        "contentHash": "sha256:6b43fc48ac4d9a5736980caa308fd7ab4859bffd07c92dbe5052044ee5b05167"
+      }
+    ],
+    "projectContentHash": "sha256:74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+  },
+  "entries": [
+    {
+      "ref": "artifact.prd-feature.author",
+      "provider": {
+        "scope": "plugin",
+        "plugin": "artifact-chain-assistant",
+        "skill": "prd-feature-flow-author"
+      },
+      "kind": "workflow",
+      "summary": "Author or revise PRD feature requirements with internal closure",
+      "match": {
+        "domains": [
+          "artifact"
+        ],
+        "artifactTypes": [
+          "feature"
+        ],
+        "intents": [
+          "author",
+          "create",
+          "revise"
+        ]
+      },
+      "accepts": [
+        "objective",
+        "existing-artifact",
+        "project-rules"
+      ],
+      "produces": [
+        "prd-feature",
+        "final-result"
+      ],
+      "sideEffects": [
+        "write-project-artifacts"
+      ],
+      "provenance": {
+        "sourceCatalog": "artifact-chain-assistant"
+      }
+    },
+    {
+      "ref": "artifact.prd-feature.validate-links",
+      "provider": {
+        "scope": "plugin",
+        "plugin": "artifact-chain-assistant",
+        "skill": "prd-feature-link-validator"
+      },
+      "kind": "operation",
+      "summary": "Validate PRD feature links with scenario scripts",
+      "match": {
+        "domains": [
+          "artifact"
+        ],
+        "artifactTypes": [
+          "feature"
+        ],
+        "intents": [
+          "validate",
+          "link-check"
+        ]
+      },
+      "accepts": [
+        "artifact-paths"
+      ],
+      "produces": [
+        "validation-result"
+      ],
+      "sideEffects": [
+        "read-only"
+      ],
+      "provenance": {
+        "sourceCatalog": "artifact-chain-assistant"
+      }
+    }
+  ],
+  "disabledEntries": []
+}

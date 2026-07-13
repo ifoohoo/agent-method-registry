@@ -1,0 +1,16 @@
+schemaVersion: 1
+
+entries:
+  - ref: infra.tf-module.audit
+    provider:
+      scope: project
+      skill: infra-tf-module-audit
+    kind: workflow
+    summary: "Audit Terraform modules with project-internal rules"
+    match:
+      domains: [infra]
+      artifactTypes: [tf-module]
+      intents: [audit]
+    accepts: [objective, target-paths]
+    produces: [audit-result]
+    sideEffects: [read-only]

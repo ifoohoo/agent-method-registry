@@ -1,0 +1,5 @@
+schemaVersion: 2
+catalog:
+  id: test-plugin
+  version: "1.0.0"
+entries: []

@@ -1,0 +1,7 @@
+schemaVersion: 1
+overrides:
+  some.catalog.ref:
+    provider:
+      scope: plugin
+      plugin: some-plugin
+      skill: some-skill

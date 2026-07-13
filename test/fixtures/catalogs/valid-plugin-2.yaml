@@ -1,0 +1,35 @@
+schemaVersion: 1
+catalog:
+  id: deploy-assistant
+  version: "1.0.0"
+
+entries:
+  - ref: deploy.manifest.author
+    provider:
+      scope: plugin
+      plugin: deploy-assistant
+      skill: manifest-author
+    kind: workflow
+    summary: "Author deployment manifests with validation"
+    match:
+      domains: [deploy]
+      artifactTypes: [manifest]
+      intents: [author, create]
+    accepts: [objective, existing-artifact]
+    produces: [deploy-manifest]
+    sideEffects: [write-project-artifacts]
+
+  - ref: deploy.manifest.validate
+    provider:
+      scope: plugin
+      plugin: deploy-assistant
+      skill: manifest-validate
+    kind: operation
+    summary: "Validate deployment manifests against cluster policy"
+    match:
+      domains: [deploy]
+      artifactTypes: [manifest]
+      intents: [validate]
+    accepts: [artifact-paths]
+    produces: [validation-result]
+    sideEffects: [read-only]

@@ -1,0 +1,16 @@
+schemaVersion: 1
+unknownField: true
+entries:
+  - ref: project.entry.action
+    provider:
+      scope: project
+      skill: my-skill
+    kind: workflow
+    summary: "Test project entry"
+    match:
+      domains: [test]
+      artifactTypes: [test]
+      intents: [test]
+    accepts: [input]
+    produces: [output]
+    sideEffects: [read-only]

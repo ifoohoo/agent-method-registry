@@ -1,0 +1,18 @@
+schemaVersion: 1
+catalog:
+  id: test-plugin
+  version: "1.0.0"
+entries:
+  - ref: test.entry.action
+    provider:
+      scope: project
+      skill: my-skill
+    kind: workflow
+    summary: "Test entry with project provider"
+    match:
+      domains: [test]
+      artifactTypes: [test]
+      intents: [test]
+    accepts: [input]
+    produces: [output]
+    sideEffects: [read-only]

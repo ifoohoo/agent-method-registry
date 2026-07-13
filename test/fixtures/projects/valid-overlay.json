@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "entries": [
+    {
+      "ref": "heimdall.rule-golden-case.audit",
+      "provider": {
+        "scope": "project",
+        "skill": "heimdall-rule-golden-case-audit"
+      },
+      "kind": "workflow",
+      "summary": "Audit Heimdall rule golden cases with project-internal closure",
+      "match": {
+        "domains": ["heimdall"],
+        "artifactTypes": ["rule-golden-cases"],
+        "intents": ["audit"]
+      },
+      "accepts": ["objective", "target-paths"],
+      "produces": ["audit-result"],
+      "sideEffects": ["write-project-artifacts"]
+    }
+  ],
+  "overrides": {
+    "artifact.prd-feature.author": {
+      "provider": {
+        "scope": "project",
+        "skill": "heimdall-prd-feature-author"
+      }
+    }
+  },
+  "disabled": [
+    "artifact.deployment-manifest.author"
+  ]
+}

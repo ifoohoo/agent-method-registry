@@ -1,0 +1,21 @@
+schemaVersion: 1
+catalog:
+  id: test-plugin
+  version: "1.0.0"
+entries:
+  - ref: test.entry.action
+    provider:
+      scope: plugin
+      plugin: test-plugin
+      skill: test-skill
+    kind: workflow
+    summary: "Test entry with conflicting sideEffects"
+    match:
+      domains: [test]
+      artifactTypes: [test]
+      intents: [test]
+    accepts: [input]
+    produces: [output]
+    sideEffects:
+      - read-only
+      - write-project-artifacts
