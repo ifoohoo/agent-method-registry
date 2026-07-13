@@ -109,3 +109,50 @@ describe('tarball audit — package.json exports', () => {
     expect(pkg.types).toBe('./dist/index.d.ts');
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DIST — no stale / duplicate hashed artifacts in tarball
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('tarball audit — dist cleanliness', () => {
+  const CHUNK_RE = /^dist\/chunk-[A-Za-z0-9]+\.js$/;
+  const CODES_RE = /^dist\/codes-[A-Za-z0-9]+\.d\.ts$/;
+  const EXPECTED_DIST_FIXED = [
+    'dist/cli.d.ts',
+    'dist/cli.js',
+    'dist/index.d.ts',
+    'dist/index.js',
+  ];
+
+  it('tarball contains exactly one hashed chunk file', () => {
+    expect(packResult).not.toBeNull();
+    const chunks = packResult!.files.filter((f) => CHUNK_RE.test(f));
+    expect(chunks).toHaveLength(1);
+  });
+
+  it('tarball contains exactly one hashed codes d.ts', () => {
+    expect(packResult).not.toBeNull();
+    const codes = packResult!.files.filter((f) => CODES_RE.test(f));
+    expect(codes).toHaveLength(1);
+  });
+
+  it('every dist file in tarball is an expected entry (no stale/unknown dist files)', () => {
+    expect(packResult).not.toBeNull();
+    const distFiles = packResult!.files.filter((f) => f.startsWith('dist/'));
+    for (const file of distFiles) {
+      const isFixed = EXPECTED_DIST_FIXED.includes(file);
+      const isChunk = CHUNK_RE.test(file);
+      const isCodes = CODES_RE.test(file);
+      expect(
+        isFixed || isChunk || isCodes,
+        `Unexpected dist file in tarball: ${file}`,
+      ).toBe(true);
+    }
+  });
+
+  it('tarball dist entry count is correct (4 fixed + 1 chunk + 1 codes = 6)', () => {
+    expect(packResult).not.toBeNull();
+    const distFiles = packResult!.files.filter((f) => f.startsWith('dist/'));
+    expect(distFiles).toHaveLength(6);
+  });
+});

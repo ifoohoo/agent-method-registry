@@ -44,7 +44,7 @@
     "INSTALL.md"
   ],
   "scripts": {
-    "build": "tsup src/index.ts src/cli.ts --format esm --dts && node -e \"const f='dist/cli.js';const fs=require('fs');const c=fs.readFileSync(f,'utf8');if(!c.startsWith('#!'))fs.writeFileSync(f,'#!/usr/bin/env node\\n'+c)\"",
+    "build": "tsup src/index.ts src/cli.ts --format esm --dts --clean && node -e \"const f='dist/cli.js';const fs=require('fs');const c=fs.readFileSync(f,'utf8');if(!c.startsWith('#!'))fs.writeFileSync(f,'#!/usr/bin/env node\\n'+c)\"",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
