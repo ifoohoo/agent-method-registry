@@ -135,7 +135,7 @@ describe('public boundary — bin entry', () => {
   it('package.json has correct bin entry', () => {
     const pkg = JSON.parse(readFileSync(join(PACKAGE_DIR, 'package.json'), 'utf-8'));
     expect(pkg.bin).toBeDefined();
-    expect(pkg.bin['agent-method-registry']).toBe('./dist/cli.js');
+    expect(pkg.bin['agent-method-registry']).toBe('./dist/bin.js');
   });
 
   it('license is Apache-2.0', () => {

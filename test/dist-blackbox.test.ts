@@ -19,7 +19,7 @@ import { tmpdir } from 'node:os';
 import { readFileSync } from 'node:fs';
 
 const PACKAGE_DIR = resolve(import.meta.dirname, '..');
-const DIST_CLI = resolve(PACKAGE_DIR, 'dist', 'cli.js');
+const DIST_CLI = resolve(PACKAGE_DIR, 'dist', 'bin.js');
 const FIXTURE_INDEX = resolve(PACKAGE_DIR, 'test-fixtures', 'effective-index.json');
 const PROVIDER_ROOTS = resolve(PACKAGE_DIR, 'test-fixtures', 'provider-roots');
 

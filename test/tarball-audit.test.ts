@@ -43,13 +43,14 @@ describe('tarball audit — npm pack includes', () => {
     expect(packResult?.name).toBe('agent-method-registry');
   });
 
-  it('tarball version is 0.1.0', () => {
-    expect(packResult?.version).toBe('0.1.0');
+  it('tarball version is 0.1.1', () => {
+    expect(packResult?.version).toBe('0.1.1');
   });
 
   const EXPECTED_IN_TARBALL = [
     'dist/index.js',
     'dist/cli.js',
+    'dist/bin.js',
     'dist/index.d.ts',
     'schemas/catalog.schema.json',
     'schemas/effective-index.schema.json',
@@ -118,16 +119,18 @@ describe('tarball audit — dist cleanliness', () => {
   const CHUNK_RE = /^dist\/chunk-[A-Za-z0-9]+\.js$/;
   const CODES_RE = /^dist\/codes-[A-Za-z0-9]+\.d\.ts$/;
   const EXPECTED_DIST_FIXED = [
+    'dist/bin.d.ts',
+    'dist/bin.js',
     'dist/cli.d.ts',
     'dist/cli.js',
     'dist/index.d.ts',
     'dist/index.js',
   ];
 
-  it('tarball contains exactly one hashed chunk file', () => {
+  it('tarball contains exactly two hashed chunk files', () => {
     expect(packResult).not.toBeNull();
     const chunks = packResult!.files.filter((f) => CHUNK_RE.test(f));
-    expect(chunks).toHaveLength(1);
+    expect(chunks).toHaveLength(2);
   });
 
   it('tarball contains exactly one hashed codes d.ts', () => {
@@ -150,9 +153,9 @@ describe('tarball audit — dist cleanliness', () => {
     }
   });
 
-  it('tarball dist entry count is correct (4 fixed + 1 chunk + 1 codes = 6)', () => {
+  it('tarball dist entry count is correct (6 fixed + 2 chunks + 1 codes = 9)', () => {
     expect(packResult).not.toBeNull();
     const distFiles = packResult!.files.filter((f) => f.startsWith('dist/'));
-    expect(distFiles).toHaveLength(6);
+    expect(distFiles).toHaveLength(9);
   });
 });

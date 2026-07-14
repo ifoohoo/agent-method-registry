@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.1
+
+### Fixed
+
+- Fixed the npm `.bin` and `npx --no-install` entry point silently exiting with code 0
+  without executing the requested command.
+- Added installed-tarball regression coverage for CLI JSON output, exit codes, provider
+  resolution, and effective-index file creation.
+
+Node API exports, schemas, CLI commands, and diagnostic contracts are unchanged.
+
 ## 0.1.0
 
 Initial release.

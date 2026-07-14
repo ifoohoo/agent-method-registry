@@ -1,5 +1,4 @@
-#!/usr/bin/env node
-// agent-method-registry — CLI entry point
+// agent-method-registry — CLI logic (importable, no auto-execution)
 // Hand-written argument parsing (no commander/yargs/etc.)
 
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -559,16 +558,4 @@ export function run(argv: string[]): void {
         2
       );
   }
-}
-
-// Entry point — only run when invoked directly (not when imported for testing)
-const isDirectRun =
-  process.argv[1] &&
-  (process.argv[1].endsWith('/cli.js') ||
-    process.argv[1].endsWith('/cli.mjs') ||
-    process.argv[1].endsWith('\\cli.js') ||
-    process.argv[1].endsWith('\\cli.mjs'));
-
-if (isDirectRun) {
-  run(process.argv);
 }

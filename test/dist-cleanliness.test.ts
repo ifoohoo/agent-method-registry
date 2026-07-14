@@ -42,7 +42,7 @@ const CHUNK_RE = /^chunk-[A-Za-z0-9]+\.js$/;
 /** Match tsup-generated codes type filenames: codes-<HASH>.d.ts */
 const CODES_RE = /^codes-[A-Za-z0-9]+\.d\.ts$/;
 /** Known non-hashed dist entry points (after build). */
-const EXPECTED_FIXED = ['cli.d.ts', 'cli.js', 'index.d.ts', 'index.js'];
+const EXPECTED_FIXED = ['bin.d.ts', 'bin.js', 'cli.d.ts', 'cli.js', 'index.d.ts', 'index.js'];
 
 beforeAll(() => {
   // ── backup current dist ──
@@ -93,9 +93,9 @@ describe('dist cleanliness — stale file removal', () => {
 // ═══════════════════════════════════════════════════════════════
 
 describe('dist cleanliness — no duplicate hashed artifacts', () => {
-  it('exactly one chunk-<hash>.js exists', () => {
+  it('exactly two chunk-<hash>.js files exist', () => {
     const chunks = listDist().filter((f) => CHUNK_RE.test(f));
-    expect(chunks).toHaveLength(1);
+    expect(chunks).toHaveLength(2);
   });
 
   it('exactly one codes-<hash>.d.ts exists', () => {
@@ -129,13 +129,13 @@ describe('dist cleanliness — expected file set', () => {
     }
   });
 
-  it('dist contains exactly 6 files (4 fixed + 1 chunk + 1 codes)', () => {
-    expect(listDist()).toHaveLength(6);
+  it('dist contains exactly 9 files (6 fixed + 2 chunks + 1 codes)', () => {
+    expect(listDist()).toHaveLength(9);
   });
 
-  it('cli.js has shebang preserved', () => {
-    const cli = resolve(DIST_DIR, 'cli.js');
-    const content = require('node:fs').readFileSync(cli, 'utf-8');
+  it('bin.js has shebang', () => {
+    const binFile = resolve(DIST_DIR, 'bin.js');
+    const content = require('node:fs').readFileSync(binFile, 'utf-8');
     expect(content.startsWith('#!/usr/bin/env node\n')).toBe(true);
   });
 });
@@ -161,9 +161,9 @@ describe('dist cleanliness — npm pack rejects stale dist artifacts', () => {
       .sort();
   });
 
-  it('tarball dist contains no duplicate hashed chunk files', () => {
+  it('tarball dist contains exactly two hashed chunk files', () => {
     const chunks = packDistFiles.filter((f) => /^dist\/chunk-[A-Za-z0-9]+\.js$/.test(f));
-    expect(chunks).toHaveLength(1);
+    expect(chunks).toHaveLength(2);
   });
 
   it('tarball dist contains no duplicate hashed codes d.ts', () => {
@@ -184,7 +184,7 @@ describe('dist cleanliness — npm pack rejects stale dist artifacts', () => {
     }
   });
 
-  it('tarball dist has exactly 6 files', () => {
-    expect(packDistFiles).toHaveLength(6);
+  it('tarball dist has exactly 9 files', () => {
+    expect(packDistFiles).toHaveLength(9);
   });
 });

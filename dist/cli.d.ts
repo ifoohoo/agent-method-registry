@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 import { D as Diagnostic } from './codes-BNplwoxd.js';
 
 interface ParsedArgs {
