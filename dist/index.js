@@ -3,10 +3,16 @@ import {
   computeContentHash,
   queryEffectiveIndex,
   resolveEntry,
+  validateBinding,
   validateCatalog,
+  validateImplementationDescriptor,
+  validateInventory,
+  validateMigrationPlan,
   validateProjectOverlay,
+  validateProjection,
+  validateRunLock,
   verifyProvider
-} from "./chunk-4TEJ2QKR.js";
+} from "./chunk-XB2GFNVI.js";
 
 // src/errors/codes.ts
 var ERROR_CODES = [
@@ -29,11 +35,39 @@ var ERROR_CODES = [
   "ENTRY_DISABLED",
   "ENTRY_NOT_FOUND",
   "NO_QUERY_MATCH",
+  "AMBIGUOUS_QUERY_MATCH",
   "INVALID_QUERY",
   "INPUT_READ_FAILED",
   "OUTPUT_WRITE_FAILED",
   "STALE_EFFECTIVE_INDEX",
-  "CLI_USAGE_ERROR"
+  "CLI_USAGE_ERROR",
+  // v2 error codes
+  "INVALID_IMPLEMENTATION_DESCRIPTOR",
+  "INVALID_INVENTORY",
+  "INVALID_BINDING",
+  "INVALID_PROJECTION",
+  "INVALID_RUN_LOCK",
+  "INVALID_MIGRATION_PLAN",
+  "INVALID_METHOD_QUERY",
+  "PROVIDER_REJECTED",
+  "BUNDLE_DIGEST_MISMATCH",
+  "LOCK_INCONSISTENCY",
+  "RESOLUTION_NONE",
+  "RESOLUTION_AMBIGUOUS",
+  "SIDE_EFFECT_UNAUTHORIZED",
+  "SIDE_EFFECT_BUDGET_EXCEEDED",
+  "BINDING_INVALID",
+  "COLLISION_DETECTED",
+  "SNAPSHOT_MISSING",
+  "SNAPSHOT_TAMPERED",
+  "MIGRATION_PLAN_DRIFT",
+  "DOCUMENT_KIND_MISMATCH",
+  "MUTUALLY_EXCLUSIVE_INPUTS",
+  "INVALID_INVENTORY_ENTRY",
+  "DUPLICATE_INVENTORY_ENTRY",
+  "CONFLICTING_INVENTORY_ENTRY",
+  "HOST_MISMATCH",
+  "NOT_EXECUTABLE"
 ];
 
 // src/doctor/checks.ts
@@ -210,6 +244,142 @@ function runProviderCheck(input, existingIndex) {
     target
   };
 }
+function runV2SchemaCheck(input) {
+  if (!input.v2) {
+    return { id: "v2-schema", status: "unverified", diagnostics: [] };
+  }
+  const diags = [];
+  let target;
+  for (const raw of input.v2.implementations ?? []) {
+    const result = validateImplementationDescriptor(raw);
+    if (!result.ok) {
+      diags.push(...result.diagnostics);
+      target = "implementation";
+    }
+  }
+  if (input.v2.inventory) {
+    const result = validateInventory(input.v2.inventory);
+    if (!result.ok) {
+      diags.push(...result.diagnostics);
+      target = "inventory";
+    }
+  }
+  if (input.v2.bindings) {
+    const result = validateBinding(input.v2.bindings);
+    if (!result.ok) {
+      diags.push(...result.diagnostics);
+      target = "binding";
+    }
+  }
+  if (input.v2.runLock) {
+    const result = validateRunLock(input.v2.runLock);
+    if (!result.ok) {
+      diags.push(...result.diagnostics);
+      target = "run-lock";
+    }
+  }
+  if (input.v2.projection) {
+    const result = validateProjection(input.v2.projection);
+    if (!result.ok) {
+      diags.push(...result.diagnostics);
+      target = "projection";
+    }
+  }
+  if (input.v2.migrationPlan) {
+    const result = validateMigrationPlan(input.v2.migrationPlan);
+    if (!result.ok) {
+      diags.push(...result.diagnostics);
+      target = "migration-plan";
+    }
+  }
+  return {
+    id: "v2-schema",
+    status: diags.length > 0 ? "fail" : "pass",
+    diagnostics: diags,
+    target
+  };
+}
+function runV2ProjectionCheck(input) {
+  if (!input.v2?.projection) {
+    return { id: "v2-projection", status: "unverified", diagnostics: [] };
+  }
+  const diags = [];
+  const projection = input.v2.projection;
+  const validation = validateProjection(projection);
+  if (!validation.ok) diags.push(...validation.diagnostics);
+  if (input.v2.familyApi && input.v2.implementations && input.v2.inventory) {
+    const rebuilt = buildEffectiveIndex({
+      familyApi: input.v2.familyApi,
+      implementations: input.v2.implementations,
+      inventory: input.v2.inventory,
+      bindings: input.v2.bindings
+    });
+    if (!rebuilt.ok) {
+      diags.push(...rebuilt.diagnostics);
+    } else if (rebuilt.index.snapshotDigest !== projection.snapshotDigest) {
+      diags.push(makeDiagnostic("INVALID_PROJECTION", "error", "Projection does not match a fresh rebuild from API/implementation/inventory/binding inputs"));
+    }
+  }
+  if (input.v2.implementations && input.v2.implementations.length > 0) {
+    const sortedImplementations = [...input.v2.implementations].sort(
+      (a, b) => `${a.familyImplementationId}@${a.version}`.localeCompare(`${b.familyImplementationId}@${b.version}`)
+    );
+    const actualImplDigest = computeContentHash(sortedImplementations);
+    if (projection.inputs.implementationDigest !== actualImplDigest) {
+      diags.push({
+        code: "INVALID_PROJECTION",
+        severity: "error",
+        message: `Projection implementationDigest drift: expected ${actualImplDigest}, got ${projection.inputs.implementationDigest}`,
+        source: { label: "<index>" }
+      });
+    }
+  }
+  if (input.v2.runLock && input.v2.inventory) {
+    const lock = input.v2.runLock;
+    const inventory = input.v2.inventory;
+    const inventoryEntry = inventory.entries.find(
+      (entry) => entry.pluginId === lock.provider.pluginId && entry.version === lock.implementationVersion
+    );
+    if (!inventoryEntry) {
+      diags.push(makeDiagnostic("LOCK_INCONSISTENCY", "error", "Run lock provider is missing from current inventory"));
+    } else {
+      const reverify = verifyProvider({
+        host: inventoryEntry.host === "claude-code" ? "claude-code" : "codex",
+        runLock: { ...lock, inventoryEntry }
+      });
+      if (reverify.status !== "verified") diags.push(...reverify.diagnostics);
+    }
+    if (lock.indexDigest !== projection.snapshotDigest) {
+      diags.push(makeDiagnostic("LOCK_INCONSISTENCY", "error", "Run lock indexDigest does not match projection snapshotDigest"));
+    }
+  }
+  return {
+    id: "v2-projection",
+    status: diags.length > 0 ? "fail" : "pass",
+    diagnostics: diags
+  };
+}
+function runV2SnapshotCheck(input) {
+  if (!input.v2?.projection) {
+    return { id: "v2-snapshot", status: "unverified", diagnostics: [] };
+  }
+  const diags = [];
+  const projection = input.v2.projection;
+  const expectedSnapshot = computeContentHash({ inputs: projection.inputs, entries: projection.entries });
+  if (projection.snapshotDigest !== expectedSnapshot) {
+    diags.push({
+      code: "SNAPSHOT_TAMPERED",
+      severity: "error",
+      message: `Projection snapshotDigest mismatch: expected ${expectedSnapshot}`,
+      source: { label: "<index>" }
+    });
+  }
+  return {
+    id: "v2-snapshot",
+    status: diags.length > 0 ? "fail" : "pass",
+    diagnostics: diags
+  };
+}
 function diagnoseRegistry(input) {
   const checks = [];
   const schemaCheck = runSchemaCheck(input);
@@ -221,6 +391,12 @@ function diagnoseRegistry(input) {
   checks.push(freshnessCheck);
   const providerCheck = runProviderCheck(input, schemaPassed ? input.existingIndex : void 0);
   checks.push(providerCheck);
+  const v2SchemaCheck = runV2SchemaCheck(input);
+  checks.push(v2SchemaCheck);
+  const v2ProjectionCheck = runV2ProjectionCheck(input);
+  checks.push(v2ProjectionCheck);
+  const v2SnapshotCheck = runV2SnapshotCheck(input);
+  checks.push(v2SnapshotCheck);
   const allDiagnostics = checks.flatMap((c) => c.diagnostics);
   const ok = !allDiagnostics.some((d) => d.severity === "error");
   return { ok, checks, diagnostics: allDiagnostics };

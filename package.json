@@ -1,6 +1,6 @@
 {
   "name": "agent-method-registry",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Deterministic registry for agent method catalog resolution, provider verification, and CLI diagnostics",
   "keywords": [
     "agent-tools",
@@ -9,18 +9,21 @@
     "provider-verification",
     "cli"
   ],
-  "author": "mzdbxqh",
+  "author": "广州市风荷科技有限公司",
+  "contributors": [
+    "mzdbxqh"
+  ],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "repository": {
     "type": "git",
-    "url": "https://github.com/mzdbxqh/agent-method-registry.git"
+    "url": "https://github.com/ifoohoo/agent-method-registry.git"
   },
   "bugs": {
-    "url": "https://github.com/mzdbxqh/agent-method-registry/issues"
+    "url": "https://github.com/ifoohoo/agent-method-registry/issues"
   },
-  "homepage": "https://github.com/mzdbxqh/agent-method-registry#readme",
+  "homepage": "https://github.com/ifoohoo/agent-method-registry#readme",
   "publishConfig": {
     "access": "public"
   },
@@ -28,10 +31,16 @@
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./schemas/*": "./schemas/*",
+    "./protocol/canonical-json-v1": {
+      "import": "./protocol/canonical-json-v1.mjs",
+      "types": "./protocol/canonical-json-v1.d.mts"
     }
   },
   "files": [
     "dist",
+    "protocol",
     "schemas",
     "README.md",
     "README.zh-CN.md",
