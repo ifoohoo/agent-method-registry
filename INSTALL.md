@@ -25,7 +25,7 @@ npx agent-method-registry validate --catalog catalog.yaml
 npx agent-method-registry query --index index.json
 ```
 
-## Skill-family adoption (unreleased v2)
+## Skill-family adoption (v2 protocol, available since 0.2.0)
 
 Installing a family plugin only adds an inventory candidate. It does not enable, trust, or bind the
 implementation. A project adopting a v2 family should:

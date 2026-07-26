@@ -9,7 +9,7 @@ diagnostics.
 (skills/workflows), resolve providers with filesystem verification, and diagnose registry health.
 It is designed for deterministic local use with CLI tools, Node libraries, and CI pipelines.
 
-The unreleased v2 protocol also provides the runtime side of a skill-family SPI: it validates
+The v2 protocol (available since 0.2.0) also provides the runtime side of a skill-family SPI: it validates
 implementation descriptors, verifies installed bundles against trusted inventory, projects
 capabilities, applies explicit project bindings, performs strict Method Query resolution, and
 produces a content-bound run method lock.

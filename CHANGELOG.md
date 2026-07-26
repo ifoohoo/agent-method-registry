@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.2.1
+
+### Added
+
+- Added public `schemas/adoption-report.schema.json` for machine-verifiable adoption level reports. The schema defines three mutually exclusive outcomes — `v1_compatible`, `v2_adopted`, or `failed` — so that skill-family adoption reports can be deterministically judged by tooling. The file ships in the `schemas/` directory and is exported via the package's `"./schemas/*"` export map entry.
+
+### Fixed
+
+- Corrected documentation that described the published v2 protocol as "unreleased". The v2 protocol has been available since 0.2.0.
+
+### Compatibility
+
+- The package root still exposes exactly seven runtime functions plus `ERROR_CODES`.
+- CLI commands and behavior are unchanged.
+- Existing v1 and v2 runtime semantics are unchanged.
+- This release is an adoption-governance and published-content patch only.
+
 ## 0.2.0
 
 ### Added
