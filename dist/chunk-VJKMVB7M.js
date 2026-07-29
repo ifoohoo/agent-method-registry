@@ -163,6 +163,69 @@ function validateAgainstSchema(schemaName, data, failureCode) {
 
 // src/v2/schema-validators.ts
 import { isAbsolute, win32 } from "path";
+
+// src/v2/identity.ts
+function v2diag(code, message) {
+  return { code, severity: "error", message, source: { label: "<index>" } };
+}
+function classifyApiRecognition(apiId) {
+  if (apiId.startsWith("artifact.")) {
+    return /^artifact\.[a-z][a-z0-9-]*-family$/.test(apiId) ? "STANDARD" : void 0;
+  }
+  if (apiId.startsWith("project.")) {
+    return /^project\.[a-z][a-z0-9-]*\.[a-z][a-z0-9-]*-family$/.test(apiId) ? "PROJECT" : void 0;
+  }
+  if (/^(?:[a-z][a-z0-9-]*\.){2,}[a-z][a-z0-9-]*-family$/.test(apiId)) return "THIRD_PARTY";
+  return void 0;
+}
+function familyIdFromApiId(apiId) {
+  const finalSegment = apiId.split(".").at(-1);
+  return finalSegment?.endsWith("-family") ? finalSegment.slice(0, -"-family".length) : void 0;
+}
+function projectAuthorityFromApiId(apiId) {
+  const match = apiId.match(/^project\.([a-z][a-z0-9-]*)\.[a-z][a-z0-9-]*-family$/);
+  return match ? `project.${match[1]}` : void 0;
+}
+function validateServiceIdFamily(serviceId, apiId) {
+  const recognition = classifyApiRecognition(apiId);
+  if (!recognition) {
+    return v2diag("INVALID_PROJECTION", `Cannot validate serviceId: apiId "${apiId}" is not a recognized family API`);
+  }
+  const canonicalPrefix = `${apiId.slice(0, -"-family".length)}.`;
+  const compatiblePrefixes = [canonicalPrefix, `${apiId}.`];
+  const matchesFamily = compatiblePrefixes.some((prefix) => {
+    if (!serviceId.startsWith(prefix)) return false;
+    return /^[a-z][a-z0-9-]*$/.test(serviceId.slice(prefix.length));
+  });
+  if (!matchesFamily) {
+    return v2diag(
+      "INVALID_PROJECTION",
+      `${recognition} serviceId "${serviceId}" does not belong to family API "${apiId}" (expected prefix "${canonicalPrefix}")`
+    );
+  }
+  if (recognition === "THIRD_PARTY") {
+    if (serviceId.startsWith("artifact.") || serviceId.startsWith("project.")) {
+      return v2diag(
+        "INVALID_PROJECTION",
+        `THIRD_PARTY serviceId "${serviceId}" must not use reserved "artifact" or "project" prefix`
+      );
+    }
+  }
+  return void 0;
+}
+function validateProjectAuthorityConsistency(projectAuthority, apiId, entityLabel) {
+  const expectedAuthority = projectAuthorityFromApiId(apiId);
+  if (!expectedAuthority) return void 0;
+  if (projectAuthority !== expectedAuthority) {
+    return v2diag(
+      "INVALID_PROJECTION",
+      `${entityLabel} projectAuthority "${projectAuthority ?? ""}" does not match API identity "${expectedAuthority}" for "${apiId}"`
+    );
+  }
+  return void 0;
+}
+
+// src/v2/schema-validators.ts
 function diag(code, message, pointer) {
   return {
     code,
@@ -231,6 +294,32 @@ function checkImplementationAuthority(data) {
   }
   return [];
 }
+function checkImplementationIdentity(data) {
+  const diagnostics = [];
+  for (const serviceId of Object.keys(data.services)) {
+    const identityDiagnostic = validateServiceIdFamily(serviceId, data.implements.apiId);
+    if (identityDiagnostic) {
+      diagnostics.push(diag(
+        "INVALID_IMPLEMENTATION_DESCRIPTOR",
+        identityDiagnostic.message,
+        `/services/${serviceId}`
+      ));
+    }
+  }
+  const authorityDiagnostic = validateProjectAuthorityConsistency(
+    data.projectAuthority,
+    data.implements.apiId,
+    `Implementation ${data.familyImplementationId}@${data.version}`
+  );
+  if (authorityDiagnostic) {
+    diagnostics.push(diag(
+      "INVALID_IMPLEMENTATION_DESCRIPTOR",
+      authorityDiagnostic.message,
+      "/projectAuthority"
+    ));
+  }
+  return diagnostics;
+}
 function validateImplementationDescriptor(data) {
   const schemaResult = validateAgainstSchema("implementation", data, "INVALID_IMPLEMENTATION_DESCRIPTOR");
   if (!schemaResult.valid) {
@@ -241,6 +330,7 @@ function validateImplementationDescriptor(data) {
   diagnostics.push(...checkImplementationNoApiSignature(desc));
   diagnostics.push(...checkImplementationServiceKeys(desc));
   diagnostics.push(...checkImplementationAuthority(desc));
+  diagnostics.push(...checkImplementationIdentity(desc));
   if (diagnostics.length > 0) {
     return { ok: false, diagnostics };
   }
@@ -325,6 +415,54 @@ function checkBindingSelectorPaths(data) {
   }
   return diagnostics;
 }
+function checkBindingIdentity(data) {
+  const diagnostics = [];
+  const bindings = [
+    ...data.bindings.map((binding, index) => ({
+      binding,
+      pointer: `/bindings/${index}`,
+      serviceId: void 0
+    })),
+    ...(data.serviceBindings ?? []).map((binding, index) => ({
+      binding,
+      pointer: `/serviceBindings/${index}`,
+      serviceId: binding.serviceId
+    }))
+  ];
+  for (const { binding, pointer, serviceId } of bindings) {
+    const { apiId } = binding.apiIdentity;
+    if (binding.familyId !== familyIdFromApiId(apiId)) {
+      diagnostics.push(diag(
+        "INVALID_BINDING",
+        `${pointer}.familyId does not match API identity "${apiId}"`,
+        `${pointer}/familyId`
+      ));
+    }
+    if (serviceId) {
+      const identityDiagnostic = validateServiceIdFamily(serviceId, apiId);
+      if (identityDiagnostic) {
+        diagnostics.push(diag(
+          "INVALID_BINDING",
+          identityDiagnostic.message,
+          `${pointer}/serviceId`
+        ));
+      }
+    }
+    const authorityDiagnostic = validateProjectAuthorityConsistency(
+      binding.providerSelector.projectAuthority,
+      apiId,
+      `${pointer}.providerSelector`
+    );
+    if (authorityDiagnostic) {
+      diagnostics.push(diag(
+        "INVALID_BINDING",
+        authorityDiagnostic.message,
+        `${pointer}/providerSelector/projectAuthority`
+      ));
+    }
+  }
+  return diagnostics;
+}
 function validateBinding(data) {
   const schemaResult = validateAgainstSchema("binding", data, "INVALID_BINDING");
   if (!schemaResult.valid) {
@@ -333,6 +471,7 @@ function validateBinding(data) {
   const binding = schemaResult.data;
   const diagnostics = [];
   diagnostics.push(...checkBindingSelectorPaths(binding));
+  diagnostics.push(...checkBindingIdentity(binding));
   if (diagnostics.length > 0) {
     return { ok: false, diagnostics };
   }
@@ -352,6 +491,36 @@ function validateProjection(data) {
   for (let index = 0; index < projection.entries.length; index++) {
     const entry = projection.entries[index];
     const pointer = `/entries/${index}`;
+    if (entry.apiId !== projection.inputs.familyApiId || entry.apiMajor !== projection.inputs.familyApiMajor || entry.apiRevisionDigest !== projection.inputs.apiRevisionDigest) {
+      diagnostics.push(diag(
+        "INVALID_PROJECTION",
+        `Projection entry API identity does not match projection inputs for ${entry.serviceId}`,
+        pointer
+      ));
+    }
+    if (entry.ref !== entry.serviceId) {
+      diagnostics.push(diag(
+        "INVALID_PROJECTION",
+        `Projection ref must equal serviceId for ${entry.serviceId}`,
+        `${pointer}/ref`
+      ));
+    }
+    const recognition = classifyApiRecognition(entry.apiId);
+    if (!recognition || recognition !== entry.apiRecognition) {
+      diagnostics.push(diag(
+        "INVALID_PROJECTION",
+        `apiRecognition ${entry.apiRecognition} does not match API identity "${entry.apiId}"`,
+        `${pointer}/apiRecognition`
+      ));
+    }
+    const serviceIdentityDiagnostic = validateServiceIdFamily(entry.serviceId, entry.apiId);
+    if (serviceIdentityDiagnostic) {
+      diagnostics.push(diag(
+        "INVALID_PROJECTION",
+        serviceIdentityDiagnostic.message,
+        `${pointer}/serviceId`
+      ));
+    }
     for (const candidate of entry.candidates) {
       if (candidate.serviceId !== entry.serviceId || candidate.apiId !== entry.apiId || candidate.apiMajor !== entry.apiMajor || candidate.apiRevisionDigest !== entry.apiRevisionDigest) {
         diagnostics.push(diag("INVALID_PROJECTION", `Candidate identity does not match projection entry ${entry.serviceId}`, pointer));
@@ -367,6 +536,20 @@ function validateProjection(data) {
       }
       if (candidate.provider?.scope === "plugin" && candidate.provider.projectAuthority) {
         diagnostics.push(diag("INVALID_PROJECTION", `Plugin candidate must not declare projectAuthority for ${entry.serviceId}`, pointer));
+      }
+      if (candidate.provider) {
+        const authorityDiagnostic = validateProjectAuthorityConsistency(
+          candidate.provider.projectAuthority,
+          candidate.apiId,
+          `Candidate ${candidate.familyImplementationId}@${candidate.version}`
+        );
+        if (authorityDiagnostic) {
+          diagnostics.push(diag(
+            "INVALID_PROJECTION",
+            authorityDiagnostic.message,
+            `${pointer}/candidates`
+          ));
+        }
       }
     }
     const installed = entry.candidates.filter((candidate) => candidate.installation === "INSTALLED");
@@ -425,6 +608,26 @@ function validateRunLock(data) {
   }
   if (lock.provider.scope === "plugin" && lock.provider.projectAuthority) {
     diagnostics.push(diag("INVALID_RUN_LOCK", "Plugin run lock provider must not declare projectAuthority", "/provider/projectAuthority"));
+  }
+  const serviceIdentityDiagnostic = validateServiceIdFamily(lock.serviceId, lock.apiId);
+  if (serviceIdentityDiagnostic) {
+    diagnostics.push(diag(
+      "INVALID_RUN_LOCK",
+      serviceIdentityDiagnostic.message,
+      "/serviceId"
+    ));
+  }
+  const authorityDiagnostic = validateProjectAuthorityConsistency(
+    lock.provider.projectAuthority,
+    lock.apiId,
+    "Run method lock provider"
+  );
+  if (authorityDiagnostic) {
+    diagnostics.push(diag(
+      "INVALID_RUN_LOCK",
+      authorityDiagnostic.message,
+      "/provider/projectAuthority"
+    ));
   }
   return diagnostics.length > 0 ? { ok: false, diagnostics } : { ok: true, data: lock, diagnostics: [] };
 }
@@ -1396,7 +1599,7 @@ function budgetAllows(budget, requested) {
 
 // src/resolver/index.ts
 var SUPPORTED_HOSTS = /* @__PURE__ */ new Set(["codex", "claude-code"]);
-function v2diag(code, message) {
+function v2diag2(code, message) {
   return { code, severity: "error", message, source: { label: "<index>" } };
 }
 function projectionCandidateSortKey(candidate) {
@@ -1520,7 +1723,7 @@ function validateInventoryEntries(candidates) {
   if (!Array.isArray(candidates) || candidates.length === 0) {
     return {
       ok: false,
-      diagnostics: [v2diag(
+      diagnostics: [v2diag2(
         "INVALID_INVENTORY_ENTRY",
         "inventoryEntries must be a non-empty array of inventory entry objects"
       )]
@@ -1531,7 +1734,7 @@ function validateInventoryEntries(candidates) {
     if (candidates[i] === null || typeof candidates[i] !== "object" || Array.isArray(candidates[i])) {
       return {
         ok: false,
-        diagnostics: [v2diag(
+        diagnostics: [v2diag2(
           "INVALID_INVENTORY_ENTRY",
           `inventoryEntries[${i}] must be an object`
         )]
@@ -1557,7 +1760,7 @@ function validateInventoryEntries(candidates) {
       return {
         ok: false,
         diagnostics: [
-          v2diag(
+          v2diag2(
             "INVALID_INVENTORY_ENTRY",
             `inventoryEntries[${i}].host "${entry.host}" is not supported; allowed: ${[...SUPPORTED_HOSTS].join(", ")}`
           )
@@ -1574,7 +1777,7 @@ function validateInventoryEntries(candidates) {
       return {
         ok: false,
         diagnostics: [
-          v2diag("DUPLICATE_INVENTORY_ENTRY", `inventoryEntries[${i}] is an exact duplicate of another entry`)
+          v2diag2("DUPLICATE_INVENTORY_ENTRY", `inventoryEntries[${i}] is an exact duplicate of another entry`)
         ]
       };
     }
@@ -1586,7 +1789,7 @@ function validateInventoryEntries(candidates) {
         return {
           ok: false,
           diagnostics: [
-            v2diag(
+            v2diag2(
               "CONFLICTING_INVENTORY_ENTRY",
               `inventoryEntries[${i}] conflicts with another entry for the same provider locator (${validatedEntries[i].pluginId}@${validatedEntries[i].version} on ${validatedEntries[i].host} at ${validatedEntries[i].canonicalRoot}): different packageDigest or provenance`
             )
@@ -1615,20 +1818,6 @@ function validateInventoryEntries(candidates) {
     return { ok: false, diagnostics: authoritative.diagnostics };
   }
   return { ok: true, data: authoritative.data };
-}
-function classifyApiRecognition(apiId) {
-  if (apiId.startsWith("artifact.")) {
-    return /^artifact\.[a-z][a-z0-9-]*-family$/.test(apiId) ? "STANDARD" : void 0;
-  }
-  if (apiId.startsWith("project.")) {
-    return /^project\.[a-z][a-z0-9-]*\.[a-z][a-z0-9-]*-family$/.test(apiId) ? "PROJECT" : void 0;
-  }
-  if (/^(?:[a-z][a-z0-9-]*\.){2,}[a-z][a-z0-9-]*-family$/.test(apiId)) return "THIRD_PARTY";
-  return void 0;
-}
-function familyIdFromApiId(apiId) {
-  const finalSegment = apiId.split(".").at(-1);
-  return finalSegment?.endsWith("-family") ? finalSegment.slice(0, -"-family".length) : void 0;
 }
 function computeProjectionEntry(serviceId, serviceKind, serviceIntents, serviceSummary, sideEffectCeiling, mixSafe, apiId, apiMajor, apiRevisionDigest, implementations, inventoryData, bindingData) {
   const diagnostics = [];
@@ -1714,11 +1903,11 @@ function computeProjectionEntry(serviceId, serviceKind, serviceIntents, serviceS
     (b) => b.serviceId === serviceId && b.apiIdentity.apiId === apiId && b.apiIdentity.apiMajor === apiMajor
   );
   if (serviceBindings.length > 0 && !mixSafe) {
-    diagnostics.push(v2diag("BINDING_INVALID", `Service-level binding is forbidden because "${serviceId}" is not mixSafe`));
+    diagnostics.push(v2diag2("BINDING_INVALID", `Service-level binding is forbidden because "${serviceId}" is not mixSafe`));
   }
   const interopAttestations = new Set(serviceBindings.map((binding) => binding.interopTckAttestation));
   if (interopAttestations.size > 1) {
-    diagnostics.push(v2diag("BINDING_INVALID", `Service bindings for "${serviceId}" do not share one interop TCK attestation`));
+    diagnostics.push(v2diag2("BINDING_INVALID", `Service bindings for "${serviceId}" do not share one interop TCK attestation`));
   }
   const matchingBindings = [...familyBindings, ...serviceBindings];
   const validBindings = [];
@@ -1732,7 +1921,7 @@ function computeProjectionEntry(serviceId, serviceKind, serviceIntents, serviceS
   }
   for (const binding of matchingBindings) {
     if (binding.familyId !== familyIdFromApiId(apiId)) {
-      diagnostics.push(v2diag("BINDING_INVALID", `Binding familyId does not match API ${apiId}`));
+      diagnostics.push(v2diag2("BINDING_INVALID", `Binding familyId does not match API ${apiId}`));
       continue;
     }
     if (binding.apiIdentity.apiRevisionDigest !== apiRevisionDigest) {
@@ -1757,12 +1946,12 @@ function computeProjectionEntry(serviceId, serviceKind, serviceIntents, serviceS
       continue;
     }
     if (boundImpl.impl.implements.apiRevisionDigest !== apiRevisionDigest) {
-      diagnostics.push(v2diag("BINDING_INVALID", `Implementation API revision mismatch for "${serviceId}"`));
+      diagnostics.push(v2diag2("BINDING_INVALID", `Implementation API revision mismatch for "${serviceId}"`));
       continue;
     }
     const attestation = boundImpl.impl.conformance.deterministicAttestation;
     if (!attestation || binding.conformanceEvidence.deterministicAttestation !== attestation) {
-      diagnostics.push(v2diag("BINDING_INVALID", `Binding conformance attestation mismatch for "${serviceId}"`));
+      diagnostics.push(v2diag2("BINDING_INVALID", `Binding conformance attestation mismatch for "${serviceId}"`));
       continue;
     }
     if (serviceBindings.includes(binding) && (!mixSafe || !binding.interopTckAttestation)) {
@@ -1771,7 +1960,7 @@ function computeProjectionEntry(serviceId, serviceKind, serviceIntents, serviceS
     if (serviceBindings.includes(binding)) {
       const tck = binding.interopTckAttestation;
       if (!(boundImpl.impl.conformance.interopTckAttestations ?? []).includes(tck)) {
-        diagnostics.push(v2diag("BINDING_INVALID", `Implementation ${boundImpl.impl.familyImplementationId}@${boundImpl.impl.version} has not attested interop TCK ${tck}`));
+        diagnostics.push(v2diag2("BINDING_INVALID", `Implementation ${boundImpl.impl.familyImplementationId}@${boundImpl.impl.version} has not attested interop TCK ${tck}`));
         continue;
       }
     }
@@ -1889,7 +2078,7 @@ function buildV2Projection(input) {
   if (!familyApi || typeof familyApi !== "object") {
     return {
       ok: false,
-      diagnostics: [v2diag("INVALID_PROJECTION", "familyApi is required for v2 projection")]
+      diagnostics: [v2diag2("INVALID_PROJECTION", "familyApi is required for v2 projection")]
     };
   }
   const api = familyApi.api;
@@ -1897,7 +2086,7 @@ function buildV2Projection(input) {
   if (!api || !services) {
     return {
       ok: false,
-      diagnostics: [v2diag("INVALID_PROJECTION", "familyApi must have api and services fields")]
+      diagnostics: [v2diag2("INVALID_PROJECTION", "familyApi must have api and services fields")]
     };
   }
   const apiId = api.id;
@@ -1905,7 +2094,7 @@ function buildV2Projection(input) {
   const apiRevisionDigest = api.revisionDigest;
   const apiRecognition = classifyApiRecognition(apiId);
   if (!apiRecognition) {
-    return { ok: false, diagnostics: [v2diag("INVALID_PROJECTION", `Family API identity has an unsupported authority namespace: ${String(apiId)}`)] };
+    return { ok: false, diagnostics: [v2diag2("INVALID_PROJECTION", `Family API identity has an unsupported authority namespace: ${String(apiId)}`)] };
   }
   const implementations = [];
   for (const raw of input.implementations ?? []) {
@@ -1927,7 +2116,7 @@ function buildV2Projection(input) {
   if (input.inventory !== void 0 && input.inventoryEntries !== void 0) {
     return {
       ok: false,
-      diagnostics: [v2diag("MUTUALLY_EXCLUSIVE_INPUTS", "inventory and inventoryEntries are mutually exclusive; provide one")]
+      diagnostics: [v2diag2("MUTUALLY_EXCLUSIVE_INPUTS", "inventory and inventoryEntries are mutually exclusive; provide one")]
     };
   }
   if (input.inventory !== void 0) {
@@ -1943,7 +2132,7 @@ function buildV2Projection(input) {
     if (inventoryData.snapshotFreshness !== "fresh" || inventoryData.snapshotDigest !== computedInventorySnapshot) {
       return {
         ok: false,
-        diagnostics: [v2diag("SNAPSHOT_TAMPERED", `Inventory snapshot is not fresh or digest does not match canonical entries`)]
+        diagnostics: [v2diag2("SNAPSHOT_TAMPERED", `Inventory snapshot is not fresh or digest does not match canonical entries`)]
       };
     }
   } else if (input.inventoryEntries !== void 0) {
@@ -1965,12 +2154,12 @@ function buildV2Projection(input) {
       const apiServices = new Map(services.map((service) => [service.id, service]));
       const tck = new Set(bindingData.serviceBindings.map((binding) => binding.interopTckAttestation));
       if (tck.size !== 1) {
-        return { ok: false, diagnostics: [v2diag("BINDING_INVALID", "All mixed service bindings must share one interop TCK attestation")] };
+        return { ok: false, diagnostics: [v2diag2("BINDING_INVALID", "All mixed service bindings must share one interop TCK attestation")] };
       }
       for (const binding of bindingData.serviceBindings) {
         const service = apiServices.get(binding.serviceId);
         if (!service || service.mixSafe !== true) {
-          return { ok: false, diagnostics: [v2diag("BINDING_INVALID", `Service ${binding.serviceId} is unknown or not mixSafe`)] };
+          return { ok: false, diagnostics: [v2diag2("BINDING_INVALID", `Service ${binding.serviceId} is unknown or not mixSafe`)] };
         }
       }
     }
@@ -1979,6 +2168,11 @@ function buildV2Projection(input) {
   for (const service of services) {
     const serviceId = service.id;
     const serviceKind = service.kind;
+    const svcFamilyDiag = validateServiceIdFamily(serviceId, apiId);
+    if (svcFamilyDiag) {
+      allDiagnostics.push(svcFamilyDiag);
+      continue;
+    }
     const serviceIntents = service.intents ?? [];
     const serviceSummary = service.summary ?? "";
     const sideEffectCeiling = service.sideEffectCeiling ?? void 0;
@@ -2369,6 +2563,17 @@ function validateMethodQuery(methodQuery, projection) {
       message: "Registry snapshot digest mismatch",
       source: { label: "<index>" }
     });
+  }
+  for (const candidate of methodQuery.candidateServices) {
+    const familyDiag = validateServiceIdFamily(candidate.serviceId, candidate.apiId);
+    if (familyDiag) {
+      diagnostics.push({
+        code: "INVALID_METHOD_QUERY",
+        severity: "error",
+        message: `Method Query candidate identity mismatch: ${familyDiag.message}`,
+        source: { label: "<index>" }
+      });
+    }
   }
   for (const candidate of methodQuery.candidateServices) {
     const projEntry = projection.entries.find((e) => e.serviceId === candidate.serviceId);

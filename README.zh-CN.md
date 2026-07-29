@@ -41,7 +41,22 @@ v2 的运行时链路是单向的，每一环只消费上一环的权威产物�
 - trusted inventory、project binding 与 registry resolve 共同承担受约束 SPI/`ServiceLoader` 的职责；
 - 本包不是 JVM bytecode verifier，也不使用 Java classloader。
 
-身份分类与边界：Registry 把受支持的 ID 确定性分类为 `STANDARD`、`THIRD_PARTY` 或 `PROJECT`，但分类不等于 authority 真实性认证；第三方和项目 API 的完整 authority/source attestation 属于独立协议。项目实现必须让显式 `projectAuthority` 贯穿 inventory、binding、projection、run lock 与运行前复验。
+身份分类与边界：Registry 把受支持的 ID 确定性分类为 `STANDARD`、`THIRD_PARTY` 或 `PROJECT`，并核对 API、service 与项目归属是否前后一致：
+
+```text
+STANDARD     artifact.<family>-family
+             artifact.<family>.<service>
+
+THIRD_PARTY  <reverse-domain>.<family>-family
+             <reverse-domain>.<family>.<service>
+
+PROJECT      project.<authority>.<family>-family
+             project.<authority>.<family>.<service>
+             projectAuthority = project.<authority>
+```
+
+早期 v2 文档中保留 `-family` 的 service namespace（例如
+`artifact.<family>-family.<service>`）继续兼容；新文档应使用上面的规范写法。分类只能证明字符串和制品关系一致，不等于 authority 真实性认证。第三方域名归属和项目 authority 的来源证明仍由独立 attestation 协议负责。
 
 ## 三条关键规则
 

@@ -6,7 +6,7 @@ import {
   validateCatalog,
   validateEffectiveIndex,
   validateProjectOverlay
-} from "./chunk-XB2GFNVI.js";
+} from "./chunk-VJKMVB7M.js";
 
 // src/cli.ts
 import { readFileSync as readFileSync2, writeFileSync as writeFileSync2, existsSync as existsSync2, mkdirSync as mkdirSync2 } from "fs";

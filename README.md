@@ -50,6 +50,23 @@ authority-source attestations are a separate protocol and are not silently infer
 Project-owned implementations must carry an explicit `projectAuthority` through inventory,
 binding, projection, run lock, and preflight re-verification.
 
+The canonical identity pairs are:
+
+```text
+STANDARD     artifact.<family>-family
+             artifact.<family>.<service>
+
+THIRD_PARTY  <reverse-domain>.<family>-family
+             <reverse-domain>.<family>.<service>
+
+PROJECT      project.<authority>.<family>-family
+             project.<authority>.<family>.<service>
+             projectAuthority = project.<authority>
+```
+
+For compatibility, existing v2 service IDs that retain `-family` in the service namespace remain
+valid. New documents should use the canonical suffix-free service namespace shown above.
+
 ## Install
 
 ```bash

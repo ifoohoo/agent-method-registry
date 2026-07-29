@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.2.2
+
+### Fixed
+
+- Fixed the v2 Method Query boundary so Registry-generated `STANDARD`, `THIRD_PARTY`, and
+  `PROJECT` service identities can all complete recommendation, prepare, strict resolve, run-lock,
+  and pre-execution re-verification.
+- Added one internal identity contract for API classification, API/service family matching, and
+  `PROJECT` authority consistency across implementation, binding, projection, Method Query, and
+  run-lock validation.
+- Kept existing service IDs that retain `-family` in the service namespace valid while making the
+  suffix-free family namespace the canonical spelling.
+
+### Compatibility
+
+- The package root still exposes exactly seven runtime functions plus `ERROR_CODES`; the internal
+  identity helpers are not exported.
+- Method Query, prepared handle, run-lock, v1 API, CLI, and digest shapes are unchanged.
+- Identity classification checks namespace consistency only. Third-party domain ownership and
+  project authority provenance remain external attestation concerns.
+
 ## 0.2.1
 
 ### Added

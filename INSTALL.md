@@ -129,6 +129,17 @@ inventory, binding, projection, run lock, and re-verification. A later authority
 protocol may prove who is entitled to publish a third-party or project namespace without changing
 these provider identities.
 
+Use matching API and service namespaces:
+
+```text
+artifact.<family>-family              → artifact.<family>.<service>
+<reverse-domain>.<family>-family      → <reverse-domain>.<family>.<service>
+project.<authority>.<family>-family   → project.<authority>.<family>.<service>
+```
+
+Existing v2 service IDs that retain `-family` before the service segment continue to work, but new
+documents should use the suffix-free service namespace.
+
 Public schemas are exported as package subpaths, for example:
 
 ```text
