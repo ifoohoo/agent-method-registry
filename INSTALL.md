@@ -23,7 +23,16 @@ After installation, the CLI is available as `agent-method-registry`:
 ```bash
 npx agent-method-registry validate --catalog catalog.yaml
 npx agent-method-registry query --index index.json
+npx agent-method-registry diagnose --mode professional-scan \
+  --input-root . --input diagnose-request.json --subject my-registry
+npx agent-method-registry diagnose --mode read-proof \
+  --proof-root . --proof conclusion.json
 ```
+
+`diagnose --mode professional-scan` reads one explicit `DiagnoseInput` JSON file. It does not walk
+the directory for catalogs. `--conclusion-output` is optional, must be an absolute path, and
+creates a new file instead of replacing one. `diagnose --mode read-proof` only reads the named
+proof; it does not re-scan the target or execute cataloged methods.
 
 ## Skill-family adoption (v2 protocol, available since 0.2.0)
 

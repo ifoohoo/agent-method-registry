@@ -766,6 +766,46 @@ interface ResolveResult {
  */
 declare function resolveEntry(input: ResolveInput): ResolveResult;
 
+declare const REGISTRY_CONCLUSION_CODES: readonly ["REGISTRY_CLEAR", "REGISTRY_FINDINGS", "REGISTRY_CHECK_INCOMPLETE", "REGISTRY_CHECK_UNAVAILABLE"];
+type RegistryConclusionCode = (typeof REGISTRY_CONCLUSION_CODES)[number];
+interface ProfessionalConclusion {
+    schemaVersion: 1;
+    kind: 'skill-family.professional-conclusion';
+    provider: {
+        id: string;
+        version: string;
+        entry: string;
+    };
+    subject: {
+        ref: string;
+        revision?: string;
+    };
+    scope: {
+        checked: string[];
+        limitations: string[];
+    };
+    outcome: {
+        completion: 'complete' | 'partial' | 'not-performed';
+        code: RegistryConclusionCode;
+        summary: string;
+    };
+    details?: {
+        ok: boolean;
+        checks: DoctorCheck[];
+        diagnostics: DiagnoseResult['diagnostics'];
+    };
+}
+interface ReadProofResult {
+    status: 'pass' | 'not_pass' | 'unavailable';
+    reason: string;
+    provider: {
+        id?: string;
+        version?: string;
+        entry?: string;
+    } | null;
+    conclusion: ProfessionalConclusion | null;
+}
+
 interface DiagnoseV2Input {
     familyApi?: unknown;
     implementations?: unknown[];
@@ -796,6 +836,38 @@ interface DiagnoseResult {
     checks: DoctorCheck[];
     diagnostics: Diagnostic[];
 }
-declare function diagnoseRegistry(input: DiagnoseInput): DiagnoseResult;
+interface ProfessionalScanInput {
+    mode: 'professional-scan';
+    subject: {
+        ref: string;
+        revision?: string;
+    };
+    request: DiagnoseInput;
+}
+interface ReadProofInput {
+    mode: 'read-proof';
+    proof: unknown;
+    expectedProviderId: string;
+}
+interface ProfessionalScanResult extends DiagnoseResult {
+    conclusion: ProfessionalConclusion;
+}
+type DiagnoseRegistryInput = DiagnoseInput | ProfessionalScanInput | ReadProofInput | {
+    mode?: string;
+    subject?: {
+        ref?: string;
+        revision?: string;
+    };
+    request?: unknown;
+    proof?: unknown;
+    expectedProviderId?: string;
+    catalogs?: unknown;
+};
 
-export { type ApiRecognition, type BindingConversion, type BindingData, type BuildEffectiveIndexInput, type BuildEffectiveIndexResult, type BuildEffectiveIndexV1Input, type BuildEffectiveIndexV1Result, type BuildEffectiveIndexV2Input, type BuildEffectiveIndexV2Result, type CatalogData, type CollisionReport, type CompactEntry, type Compatibility, type DiagnoseInput, type DiagnoseResult, Diagnostic, type DisabledEntry, type DoctorCheck, type EffectiveEntry, type EffectiveIndex, type Enablement, type Entry, type ExecutableRecommendationEntry, type ImplementationDescriptor, type Installation, type InventoryData, type InventoryEntry, type MethodQuery, type MethodQueryCandidate, type MigrationPlan, type NonExecutableRecommendationEntry, type Override, type PluginProvider, type PrepareQueryResult, PreparedMethodQueryHandle as PreparedQueryHandle, type ProjectBindingData, type ProjectOverlayData, type ProjectProvider, type ProjectionData, type ProjectionEntry, type Provider, type ProviderVerification, type QueryInput, type QueryResult, type RecommendationEntry, type RecommendationQueryResult, type Resolution, type ResolveInput, type ResolveResult, type RunMethodLock, type SchemaValidationResult, type SelectionSource, type SyntheticIdentity, type Trust, type V1QueryInput, type V1QueryResult, type V2PrepareQueryInput, type V2RecommendationQueryInput, type ValidateCatalogDocumentResult, type ValidateCatalogResult, type ValidateCatalogV1Result, type ValidateEffectiveIndexResult, type ValidateProjectOverlayDocumentResult, type ValidateProjectOverlayResult, type ValidateProjectOverlayV1Result, type VerifyProviderInput, type VerifyProviderResult, type VerifyProviderRunLockInput, type VerifyProviderV1Input, type VerifyProviderV2Input, buildEffectiveIndex, diagnoseRegistry, queryEffectiveIndex, resolveEntry, validateCatalog, validateProjectOverlay, verifyProvider };
+type DiagnoseRegistryResult = DiagnoseResult | ProfessionalScanResult | ReadProofResult;
+declare function diagnoseRegistry(input: ReadProofInput): ReadProofResult;
+declare function diagnoseRegistry(input: ProfessionalScanInput): ProfessionalScanResult;
+declare function diagnoseRegistry(input: DiagnoseInput): DiagnoseResult;
+declare function diagnoseRegistry(input: DiagnoseRegistryInput): DiagnoseRegistryResult;
+
+export { type ApiRecognition, type BindingConversion, type BindingData, type BuildEffectiveIndexInput, type BuildEffectiveIndexResult, type BuildEffectiveIndexV1Input, type BuildEffectiveIndexV1Result, type BuildEffectiveIndexV2Input, type BuildEffectiveIndexV2Result, type CatalogData, type CollisionReport, type CompactEntry, type Compatibility, type DiagnoseInput, type DiagnoseRegistryInput, type DiagnoseRegistryResult, type DiagnoseResult, Diagnostic, type DisabledEntry, type DoctorCheck, type EffectiveEntry, type EffectiveIndex, type Enablement, type Entry, type ExecutableRecommendationEntry, type ImplementationDescriptor, type Installation, type InventoryData, type InventoryEntry, type MethodQuery, type MethodQueryCandidate, type MigrationPlan, type NonExecutableRecommendationEntry, type Override, type PluginProvider, type PrepareQueryResult, PreparedMethodQueryHandle as PreparedQueryHandle, type ProfessionalConclusion, type ProfessionalScanInput, type ProfessionalScanResult, type ProjectBindingData, type ProjectOverlayData, type ProjectProvider, type ProjectionData, type ProjectionEntry, type Provider, type ProviderVerification, type QueryInput, type QueryResult, type ReadProofInput, type ReadProofResult, type RecommendationEntry, type RecommendationQueryResult, type Resolution, type ResolveInput, type ResolveResult, type RunMethodLock, type SchemaValidationResult, type SelectionSource, type SyntheticIdentity, type Trust, type V1QueryInput, type V1QueryResult, type V2PrepareQueryInput, type V2RecommendationQueryInput, type ValidateCatalogDocumentResult, type ValidateCatalogResult, type ValidateCatalogV1Result, type ValidateEffectiveIndexResult, type ValidateProjectOverlayDocumentResult, type ValidateProjectOverlayResult, type ValidateProjectOverlayV1Result, type VerifyProviderInput, type VerifyProviderResult, type VerifyProviderRunLockInput, type VerifyProviderV1Input, type VerifyProviderV2Input, buildEffectiveIndex, diagnoseRegistry, queryEffectiveIndex, resolveEntry, validateCatalog, validateProjectOverlay, verifyProvider };

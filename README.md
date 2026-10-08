@@ -101,11 +101,36 @@ The package exposes exactly **7 functions** plus `ERROR_CODES` and domain types:
 | `queryEffectiveIndex` | Query a v1 index, recommend v2 services, or prepare an authorized v2 execution |
 | `resolveEntry` | Resolve v1 providers or perform v2 strict resolution and create a run method lock |
 | `verifyProvider` | Verify v1 paths or v2 inventory/bundle/run-lock evidence against the filesystem |
-| `diagnoseRegistry` | Diagnose schema, projection, snapshot, binding, provider, lock, and migration health |
+| `diagnoseRegistry` | Diagnose schema, projection, snapshot, binding, provider, lock, and migration health. The same function also runs a professional scan or reads an existing proof; it does not add an eighth root export. |
 
 TypeScript overloads preserve the v1 result types when a v1 catalog, overlay, or index input is
 passed. Published schemas are addressable through package subpaths such as
 `agent-method-registry/schemas/implementation.schema.json` without adding runtime functions.
+
+Omit `mode` and `diagnoseRegistry` keeps the original synchronous diagnosis. Two explicit inputs
+reuse that same function:
+
+```javascript
+const scanned = diagnoseRegistry({
+  mode: 'professional-scan',
+  subject: { ref: 'my-registry' },
+  request: { catalogs: [catalogData] }, // existing DiagnoseInput; catalogs are not inferred
+});
+
+const read = diagnoseRegistry({
+  mode: 'read-proof',
+  proof: scanned.conclusion,
+  expectedProviderId: 'agent-method-registry',
+});
+```
+
+`professional-scan` returns the original `ok`, `checks`, and `diagnostics` fields plus a common
+`conclusion`. The conclusion `outcome.code` is one of `REGISTRY_CLEAR`, `REGISTRY_FINDINGS`,
+`REGISTRY_CHECK_INCOMPLETE`, or `REGISTRY_CHECK_UNAVAILABLE`. `ok: true` is not a complete scan:
+unverified selected checks yield `REGISTRY_CHECK_INCOMPLETE`. Optional v2 checks enter the declared
+scope only when `request.v2` is present. `read-proof` consumes an already-parsed proof object; it
+does not read files, re-run diagnosis, or execute cataloged methods. Successful reads return
+`status: "pass" | "not_pass" | "unavailable"` with the original conclusion left unchanged.
 
 ### v2 producer flow
 
@@ -175,6 +200,19 @@ agent-method-registry resolve --index index.json --ref my-plugin.entity.author -
 agent-method-registry migrate --catalog catalog.yaml --project project.yaml \
   --migration-context migration-context.json --dry-run --out-plan migration-plan.json \
   --transaction-root .
+
+# Professional scan: --input is DiagnoseInput JSON relative to --input-root
+agent-method-registry diagnose --mode professional-scan \
+  --input-root . --input diagnose-request.json --subject my-registry
+
+# Optional exclusive proof write; the path must be absolute and must not already exist
+agent-method-registry diagnose --mode professional-scan \
+  --input-root . --input diagnose-request.json --subject my-registry \
+  --conclusion-output /absolute/path/conclusion.json
+
+# Read a Registry professional conclusion; the path is relative to --proof-root
+agent-method-registry diagnose --mode read-proof \
+  --proof-root . --proof conclusion.json
 ```
 
 The v1 catalog/overlay/query/resolve protocol remains supported. v2 migration supports explicit
@@ -194,17 +232,23 @@ All CLI commands output a single JSON envelope to stdout:
 ```
 
 Exit codes: `0` = success, `1` = data/index/entry error, `2` = malformed invocation.
+`diagnose --mode read-proof` uses the common read mapping: `pass` exits 0, `not_pass` exits 1, and
+unreadable or foreign proofs exit 2. `diagnose --mode professional-scan` exits 0 only for
+`REGISTRY_CLEAR`; findings, incomplete checks, and unavailable checks exit 1.
 
 ## Safety
 
 <!-- release-skill:capability:safe-first-command -->
 A safe first command is `agent-method-registry --help`: it is read-only and writes nothing.
-Likewise, `validate`, `query`, `resolve`, and `diagnose` only read the inputs you name.
+`validate`, `query`, `resolve`, and `diagnose` only read the inputs named on the command line.
+They do not execute cataloged methods. `diagnose` writes a file only when `--conclusion-output`
+is set.
 
 <!-- release-skill:capability:external-write-boundary -->
 External-write boundary: this package is deterministic and local. It makes no network calls and
-performs no external writes. The only file writes are the ones you explicitly request: `--out`
-(index), `--out-plan` (migration plan), and migration `--apply` confined to `--transaction-root`.
+performs no external writes. The only file writes are the ones explicitly requested: `--out`
+(index), `--out-plan` (migration plan), `--conclusion-output` (new professional conclusion, never
+a replacement), and migration `--apply` confined to `--transaction-root`.
 
 ## License
 

@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.0
+
+### Added
+
+- Added `professional-scan` and `read-proof` modes to `diagnoseRegistry`. A scan keeps the existing diagnostic fields and reports the checks it performed. Proof reading interprets an existing Registry conclusion without scanning the target again.
+- Added matching `diagnose` CLI modes. The CLI reads explicitly rooted inputs and proofs, and creates a new conclusion only when an output path is supplied. Existing conclusions are never overwritten.
+- Adopted `skill-family-contracts@0.22.0` for conclusion validation and `skill-family-harness-node@0.22.0` for strict file reading and exclusive output creation.
+
+### Compatibility
+
+- The package root still exposes exactly seven runtime functions plus `ERROR_CODES`. Existing `diagnoseRegistry` calls and CLI commands retain their behavior.
+
 ## 0.2.2
 
 ### Fixed

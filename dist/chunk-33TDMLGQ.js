@@ -1,17 +1,20 @@
 import {
+  REGISTRY_PROVIDER_ID,
   buildEffectiveIndex,
   computeContentHash,
+  diagnoseRegistry,
   queryEffectiveIndex,
   resolveEntry,
   validateCatalog,
   validateEffectiveIndex,
   validateProjectOverlay
-} from "./chunk-VJKMVB7M.js";
+} from "./chunk-5DQRT5MW.js";
 
 // src/cli.ts
 import { readFileSync as readFileSync2, writeFileSync as writeFileSync2, existsSync as existsSync2, mkdirSync as mkdirSync2 } from "fs";
 import { parse as yamlParse } from "yaml";
-import { resolve as resolve2, dirname as dirname2, relative as relative2, isAbsolute as isAbsolute2 } from "path";
+import { resolve as resolve2, dirname as dirname2, relative as relative2, isAbsolute as isAbsolute2, basename as basename2 } from "path";
+import { readFileStrict, publishFileExclusive } from "skill-family-harness-node";
 
 // src/v2/migration.ts
 import {
@@ -889,6 +892,218 @@ function cmdMigrateApply(parsed, transactionRoot) {
     diagnostics: []
   }, 0);
 }
+var DIAGNOSE_ALLOWED_FLAGS = /* @__PURE__ */ new Set([
+  "mode",
+  "input-root",
+  "input",
+  "subject",
+  "conclusion-output",
+  "proof-root",
+  "proof"
+]);
+function errorMessage(err) {
+  return err instanceof Error ? err.message : String(err);
+}
+function harnessKind(err) {
+  if (typeof err !== "object" || err === null) return void 0;
+  const details = err.details;
+  return typeof details?.kind === "string" ? details.kind : void 0;
+}
+async function cmdDiagnose(parsed) {
+  rejectUnknownFlags(parsed, DIAGNOSE_ALLOWED_FLAGS);
+  rejectExtraPositionals(parsed, 1);
+  const mode = requireFlag(parsed, "mode");
+  if (mode !== "professional-scan" && mode !== "read-proof") {
+    usageError(`Unknown diagnose mode: ${JSON.stringify(mode)}. Must be 'professional-scan' or 'read-proof'`);
+  }
+  if (mode === "professional-scan") {
+    await cmdDiagnoseScan(parsed);
+    return;
+  }
+  await cmdDiagnoseReadProof(parsed);
+}
+async function cmdDiagnoseScan(parsed) {
+  const inputRoot = requireFlag(parsed, "input-root");
+  const inputRel = requireFlag(parsed, "input");
+  const subjectRef = requireFlag(parsed, "subject");
+  const conclusionOutput = optionalSingleton(parsed, "conclusion-output");
+  if (hasFlag(parsed, "proof-root") || hasFlag(parsed, "proof")) {
+    usageError("professional-scan does not accept --proof-root or --proof");
+  }
+  if (conclusionOutput !== void 0 && !isAbsolute2(conclusionOutput)) {
+    usageError("--conclusion-output requires an absolute path");
+  }
+  let content;
+  try {
+    const receipt = await readFileStrict(inputRoot, inputRel, { encoding: "utf8" });
+    content = String(receipt.content);
+  } catch (err) {
+    emit(
+      {
+        ok: false,
+        diagnostics: [{
+          code: "INPUT_READ_FAILED",
+          severity: "error",
+          message: `Failed to read diagnose input: ${errorMessage(err)}`
+        }]
+      },
+      2
+    );
+  }
+  let request;
+  try {
+    request = JSON.parse(content);
+  } catch (err) {
+    emit(
+      {
+        ok: false,
+        diagnostics: [{
+          code: "INPUT_READ_FAILED",
+          severity: "error",
+          message: `Failed to parse diagnose input JSON: ${errorMessage(err)}`
+        }]
+      },
+      1
+    );
+  }
+  let result;
+  try {
+    result = diagnoseRegistry({
+      mode: "professional-scan",
+      subject: { ref: subjectRef },
+      request
+    });
+  } catch (err) {
+    emit(
+      {
+        ok: false,
+        diagnostics: [{
+          code: "INPUT_READ_FAILED",
+          severity: "error",
+          message: `Failed to diagnose registry: ${errorMessage(err)}`
+        }]
+      },
+      1
+    );
+  }
+  if (conclusionOutput !== void 0) {
+    try {
+      await publishFileExclusive(
+        dirname2(conclusionOutput),
+        basename2(conclusionOutput),
+        JSON.stringify(result.conclusion, null, 2) + "\n"
+      );
+    } catch (err) {
+      emit(
+        {
+          ok: false,
+          diagnostics: [{
+            code: "OUTPUT_WRITE_FAILED",
+            severity: "error",
+            message: harnessKind(err) === "exclusive-publish-conflict" ? `Conclusion output already exists: ${conclusionOutput}` : `Failed to write conclusion: ${errorMessage(err)}`
+          }]
+        },
+        1
+      );
+    }
+  }
+  const exitCode = result.conclusion.outcome.code === "REGISTRY_CLEAR" ? 0 : 1;
+  emit(
+    {
+      ok: exitCode === 0,
+      data: result,
+      diagnostics: result.diagnostics
+    },
+    exitCode
+  );
+}
+async function cmdDiagnoseReadProof(parsed) {
+  const proofRoot = requireFlag(parsed, "proof-root");
+  const proofRel = requireFlag(parsed, "proof");
+  if (hasFlag(parsed, "input-root") || hasFlag(parsed, "input") || hasFlag(parsed, "subject") || hasFlag(parsed, "conclusion-output")) {
+    usageError("read-proof does not accept --input-root, --input, --subject, or --conclusion-output");
+  }
+  let content;
+  try {
+    const receipt = await readFileStrict(proofRoot, proofRel, { encoding: "utf8" });
+    content = String(receipt.content);
+  } catch (err) {
+    emit(
+      {
+        ok: false,
+        data: {
+          status: "unavailable",
+          reason: `Failed to read proof: ${errorMessage(err)}`,
+          provider: null,
+          conclusion: null
+        },
+        diagnostics: [{
+          code: "INPUT_READ_FAILED",
+          severity: "error",
+          message: `Failed to read proof: ${errorMessage(err)}`
+        }]
+      },
+      2
+    );
+  }
+  let proof;
+  try {
+    proof = JSON.parse(content);
+  } catch (err) {
+    emit(
+      {
+        ok: false,
+        data: {
+          status: "unavailable",
+          reason: `Failed to parse proof JSON: ${errorMessage(err)}`,
+          provider: null,
+          conclusion: null
+        },
+        diagnostics: [{
+          code: "INPUT_READ_FAILED",
+          severity: "error",
+          message: `Failed to parse proof JSON: ${errorMessage(err)}`
+        }]
+      },
+      2
+    );
+  }
+  let result;
+  try {
+    result = diagnoseRegistry({
+      mode: "read-proof",
+      proof,
+      expectedProviderId: REGISTRY_PROVIDER_ID
+    });
+  } catch (err) {
+    emit(
+      {
+        ok: false,
+        data: {
+          status: "unavailable",
+          reason: `Failed to interpret proof: ${errorMessage(err)}`,
+          provider: null,
+          conclusion: null
+        },
+        diagnostics: [{
+          code: "INPUT_READ_FAILED",
+          severity: "error",
+          message: `Failed to interpret proof: ${errorMessage(err)}`
+        }]
+      },
+      2
+    );
+  }
+  const exitCode = result.status === "pass" ? 0 : result.status === "not_pass" ? 1 : 2;
+  emit(
+    {
+      ok: result.status === "pass",
+      data: result,
+      diagnostics: []
+    },
+    exitCode
+  );
+}
 function cmdMigrateRollback(parsed, transactionRoot) {
   const snapshotPath = requireFlag(parsed, "snapshot");
   const snapshotInput = readInput(snapshotPath);
@@ -926,6 +1141,8 @@ function run(argv) {
     case "migrate":
       cmdMigrate(parsed);
       break;
+    case "diagnose":
+      return cmdDiagnose(parsed);
     default:
       emit(
         {
@@ -934,7 +1151,7 @@ function run(argv) {
             {
               code: "CLI_USAGE_ERROR",
               severity: "error",
-              message: parsed.command ? `Unknown command: ${parsed.command}` : "No command specified. Use: validate | index | query | resolve | migrate"
+              message: parsed.command ? `Unknown command: ${parsed.command}` : "No command specified. Use: validate | index | query | resolve | migrate | diagnose"
             }
           ]
         },

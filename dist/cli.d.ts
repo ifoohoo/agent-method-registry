@@ -32,6 +32,6 @@ declare function writeOutput(filePath: string, data: unknown): {
     ok: false;
     diagnostics: Diagnostic[];
 };
-declare function run(argv: string[]): void;
+declare function run(argv: string[]): void | Promise<void>;
 
 export { ExitError, type ParsedArgs, emit, getAllFlags, getFlag, hasFlag, parseArgs, readInput, run, writeOutput };

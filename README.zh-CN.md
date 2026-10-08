@@ -100,9 +100,38 @@ import {
 | `queryEffectiveIndex` | 查询 v1 index、推荐 v2 服务，或准备一次已授权的 v2 执行 |
 | `resolveEntry` | 解析 v1 provider，或执行 v2 strict resolve 并生成 run method lock |
 | `verifyProvider` | 依据文件系统验证 v1 路径或 v2 inventory/bundle/run-lock 证据 |
-| `diagnoseRegistry` | 诊断 schema、projection、snapshot、binding、provider、lock 与 migration 健康度 |
+| `diagnoseRegistry` | 诊断 schema、projection、snapshot、binding、provider、lock 与 migration 健康度。同一函数还可做专业扫描或读取已有证明，不增加第八个根导出。 |
 
 TypeScript overload 在输入为 v1 文档时保留原有 v1 结果类型。公开 schema 通过 package subpath 定位（如 `agent-method-registry/schemas/implementation.schema.json`），不增加新的运行时函数。
+
+不带 `mode` 时，`diagnoseRegistry` 仍走原来的同步诊断。下面两种显式输入复用同一个函数：
+
+```javascript
+const scanned = diagnoseRegistry({
+  mode: 'professional-scan',
+  subject: { ref: 'my-registry' },
+  request: { catalogs: [catalogData] }, // 现有 DiagnoseInput；不会从目录猜 catalog
+});
+
+const read = diagnoseRegistry({
+  mode: 'read-proof',
+  proof: scanned.conclusion,
+  expectedProviderId: 'agent-method-registry',
+});
+```
+
+上面的 `scanned` 走专业扫描，`read` 读取刚得到的证明。`professional-scan` 仍返回原来的 `ok`、`checks`、`diagnostics`，并附带共同 `conclusion`。
+
+`outcome.code` 只有四个值：
+
+- `REGISTRY_CLEAR`：已选中且适用的检查全部通过
+- `REGISTRY_FINDINGS`：检查报告了失败
+- `REGISTRY_CHECK_INCOMPLETE`：没有失败，但含未完成或未验证项
+- `REGISTRY_CHECK_UNAVAILABLE`：无法开展检查
+
+`ok: true` 并不表示扫描完整。已选中检查若含未验证项，代码是 `REGISTRY_CHECK_INCOMPLETE`。可选 v2 检查只在提供 `request.v2` 时进入声明范围。
+
+`read-proof` 只消费已经解析好的证明对象，不读文件、不重跑诊断、不执行已登记方法。成功读取返回 `status: "pass" | "not_pass" | "unavailable"`，原结论保持不变。
 
 ### v2 生产者流程
 
@@ -156,6 +185,19 @@ agent-method-registry resolve --index index.json --ref my-plugin.entity.author -
 agent-method-registry migrate --catalog catalog.yaml --project project.yaml \
   --migration-context migration-context.json --dry-run --out-plan migration-plan.json \
   --transaction-root .
+
+# 专业扫描：--input 是相对于 --input-root 的 DiagnoseInput JSON
+agent-method-registry diagnose --mode professional-scan \
+  --input-root . --input diagnose-request.json --subject my-registry
+
+# 可选的排他证明写入；路径必须是绝对路径，且目标不能已存在
+agent-method-registry diagnose --mode professional-scan \
+  --input-root . --input diagnose-request.json --subject my-registry \
+  --conclusion-output /absolute/path/conclusion.json
+
+# 读取一份 Registry 专业结论；路径相对于 --proof-root
+agent-method-registry diagnose --mode read-proof \
+  --proof-root . --proof conclusion.json
 ```
 
 v1 catalog/overlay/query/resolve 协议继续兼容。v2 migration 提供显式 dry-run、apply 与基于 snapshot 的 rollback；rollback 写入前会验证每个目标仍与 apply 产物逐字节一致，apply 后的任何用户改动都会让整次恢复在零写入状态下失败。
@@ -171,14 +213,15 @@ v1 catalog/overlay/query/resolve 协议继续兼容。v2 migration 提供显式 
 ```
 
 退出码：`0` = 成功，`1` = 数据/索引/条目错误，`2` = 格式错误的调用。
+`diagnose --mode read-proof` 按共同读取映射：`pass` 退出 0，`not_pass` 退出 1，无法读取或非本族证明退出 2。`diagnose --mode professional-scan` 只在 `REGISTRY_CLEAR` 时退出 0；发现项、不完整和无法检查都退出 1。
 
 ## 安全边界
 
 <!-- release-skill:capability:safe-first-command -->
-安全的第一条命令是 `agent-method-registry --help`：只读、不写任何文件。`validate`、`query`、`resolve`、`diagnose` 同样只读取你显式给出的输入。
+安全的第一条命令是 `agent-method-registry --help`：只读、不写任何文件。`validate`、`query`、`resolve`、`diagnose` 只读取命令行点名的输入，不执行已登记方法。`diagnose` 只在指定 `--conclusion-output` 时写文件。
 
 <!-- release-skill:capability:external-write-boundary -->
-外部写入边界：本包是确定性的本地工具，不发起网络请求、不做任何外部写入。唯一的文件写入来自你显式指定的参数：`--out`（索引）、`--out-plan`（迁移计划），以及限制在 `--transaction-root` 内的 migration `--apply`。
+外部写入边界：本包是确定性的本地工具，不发起网络请求、不做任何外部写入。唯一的文件写入来自显式指定的参数：`--out`（索引）、`--out-plan`（迁移计划）、`--conclusion-output`（新建专业结论，不覆盖已有文件），以及限制在 `--transaction-root` 内的 migration `--apply`。
 
 ## 许可证
 
