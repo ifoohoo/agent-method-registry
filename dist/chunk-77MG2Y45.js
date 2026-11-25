@@ -1,288 +1,427 @@
 import {
   REGISTRY_PROVIDER_ID,
+  SUPPORTED_HOST_LIST,
+  applyMigrationPlan,
   buildEffectiveIndex,
   computeContentHash,
   diagnoseRegistry,
+  discoverDefaultAntigravityRoots,
+  formatSupportedHosts,
+  generateMigrationPlan,
+  isSupportedHost,
+  normalizeHostId,
   queryEffectiveIndex,
   resolveEntry,
+  rollbackMigration,
   validateCatalog,
   validateEffectiveIndex,
-  validateProjectOverlay
-} from "./chunk-5DQRT5MW.js";
+  validateProjectOverlay,
+  validateServiceIdFamily,
+  validateTransactionPath
+} from "./chunk-B2A5J4XP.js";
 
 // src/cli.ts
-import { readFileSync as readFileSync2, writeFileSync as writeFileSync2, existsSync as existsSync2, mkdirSync as mkdirSync2 } from "fs";
-import { parse as yamlParse } from "yaml";
+import { readFileSync as readFileSync2, writeFileSync as writeFileSync2, existsSync as existsSync2, mkdirSync } from "fs";
+import { parse as yamlParse2 } from "yaml";
 import { resolve as resolve2, dirname as dirname2, relative as relative2, isAbsolute as isAbsolute2, basename as basename2 } from "path";
 import { readFileStrict, publishFileExclusive } from "skill-family-harness-node";
 
-// src/v2/migration.ts
-import {
-  readFileSync,
-  writeFileSync,
-  existsSync,
-  mkdirSync,
-  renameSync,
-  unlinkSync,
-  lstatSync,
-  realpathSync
-} from "fs";
-import { resolve, relative, isAbsolute, dirname, basename } from "path";
-var CONVERSION_ALGORITHM_VERSION = "2.0.0";
-function generateSyntheticIdentity(entry) {
-  const canonicalInput = {
-    ref: entry.ref,
-    provider: {
-      scope: entry.provider.scope,
-      plugin: entry.provider.plugin ?? null,
-      skill: entry.provider.skill
-    },
-    kind: entry.kind
-  };
-  const syntheticDigest = computeContentHash(canonicalInput);
-  const suffix = syntheticDigest.slice("sha256:".length, "sha256:".length + 16);
-  return {
-    v1Ref: entry.ref,
-    familyImplementationId: `synthetic.family.${suffix}`,
-    serviceImplementationId: `synthetic.service.${suffix}`,
-    syntheticDigest,
-    provenance: `v1:${entry.provider.scope}:${entry.provider.plugin ?? "project"}`,
-    conversionAlgorithmVersion: CONVERSION_ALGORITHM_VERSION
-  };
-}
-function convertOverrideToBinding(override, mapping) {
-  if (override.ref !== mapping.ref) throw new Error(`Migration mapping ref mismatch: ${override.ref} != ${mapping.ref}`);
-  const sourceDigest = computeContentHash(override);
-  const v2Binding = {
-    familyId: mapping.familyId,
-    apiIdentity: { ...mapping.apiIdentity },
-    implementationIdentity: { ...mapping.implementationIdentity },
-    providerSelector: { ...mapping.providerSelector },
-    selectionSource: "synthetic-migration",
-    conformanceEvidence: { ...mapping.conformanceEvidence }
-  };
-  const conversionDigest = computeContentHash({
-    sourceDigest,
-    v2Binding,
-    targetPath: mapping.targetPath,
-    conversionAlgorithmVersion: CONVERSION_ALGORITHM_VERSION
-  });
-  return {
-    v1Ref: override.ref,
-    v2Binding,
-    sourceDigest,
-    conversionAlgorithmVersion: CONVERSION_ALGORITHM_VERSION,
-    conversionDigest
-  };
-}
-function detectCollisions(syntheticIds, bindingConversions, existingV2Entries) {
-  const collisions = [];
-  for (const synId of syntheticIds) {
-    if (existingV2Entries.some(
-      (existing) => existing.familyImplementationId === synId.familyImplementationId && existing.serviceImplementationId === synId.serviceImplementationId
-    )) {
-      collisions.push({
-        ref: synId.v1Ref,
-        type: "identity-collision",
-        details: `Synthetic identity ${synId.familyImplementationId}/${synId.serviceImplementationId} already exists`
-      });
+// src/unbind.ts
+import { existsSync, lstatSync, readFileSync, writeFileSync, unlinkSync } from "fs";
+import { basename, dirname, join, resolve } from "path";
+import { parse as yamlParse, stringify as yamlStringify } from "yaml";
+var DEFAULT_CONFIG_CANDIDATES = [
+  "agent-methods.yaml",
+  "agent-methods.yml",
+  "agent-methods.json"
+];
+function resolveTargetConfigPath(options) {
+  if (options.projectPath) {
+    if (options.projectPath.includes("\0") || options.projectPath.split(/[\\/]+/).includes("..")) {
+      return {
+        ok: false,
+        diagnostics: [{
+          code: "INPUT_READ_FAILED",
+          severity: "error",
+          message: `Unsafe project configuration path rejected (contains ".." or null byte): "${options.projectPath}"`,
+          source: { label: "<project>" },
+          suggestion: "Pass a clean path without .. traversal segments."
+        }]
+      };
+    }
+    const absPath = resolve(options.projectPath);
+    const parent = dirname(absPath);
+    if (!existsSync(parent)) {
+      return {
+        ok: false,
+        diagnostics: [{
+          code: "INPUT_READ_FAILED",
+          severity: "error",
+          message: `Cannot access project configuration directory "${parent}" for "${options.projectPath}"`,
+          source: { label: "<project>" },
+          suggestion: "Verify that the parent project directory exists before running unbind."
+        }]
+      };
+    }
+    const pathCheck = validateTransactionPath(basename(absPath), parent);
+    if (!pathCheck.ok) {
+      return {
+        ok: false,
+        diagnostics: [{
+          code: "INPUT_READ_FAILED",
+          severity: "error",
+          message: `Unsafe project configuration path rejected (${pathCheck.reason}): "${options.projectPath}"`,
+          source: { label: "<project>" },
+          suggestion: "Use a direct regular file inside the project directory rather than a symlink."
+        }]
+      };
+    }
+    if (existsSync(absPath)) {
+      return { ok: true, path: absPath, exists: true };
+    }
+    return { ok: true, path: absPath, exists: false };
+  }
+  const rootDir = resolve(options.projectRoot);
+  if (!existsSync(rootDir) || lstatSync(rootDir).isSymbolicLink()) {
+    return {
+      ok: false,
+      diagnostics: [{
+        code: "INPUT_READ_FAILED",
+        severity: "error",
+        message: !existsSync(rootDir) ? `Project root directory does not exist: ${rootDir}` : `Project root directory must not be a symlink: ${rootDir}`,
+        source: { label: "<project>" },
+        suggestion: "Pass an existing non-symlink directory to --project-root or specify --project <file>."
+      }]
+    };
+  }
+  for (const candidate of DEFAULT_CONFIG_CANDIDATES) {
+    const candidatePath = join(rootDir, candidate);
+    if (existsSync(candidatePath)) {
+      const candidateCheck = validateTransactionPath(candidate, rootDir);
+      if (!candidateCheck.ok || !lstatSync(candidatePath).isFile()) {
+        return {
+          ok: false,
+          diagnostics: [{
+            code: "INPUT_READ_FAILED",
+            severity: "error",
+            message: `Unsafe project configuration file rejected (${candidateCheck.reason ?? "not a regular file"}): ${candidatePath}`,
+            source: { label: "<project>" },
+            suggestion: "Ensure agent-methods config is a regular file contained in the project root."
+          }]
+        };
+      }
+      return { ok: true, path: candidatePath, exists: true };
     }
   }
-  const byFamily = /* @__PURE__ */ new Map();
-  for (const conversion of bindingConversions) {
-    const ids = byFamily.get(conversion.v2Binding.familyId) ?? /* @__PURE__ */ new Set();
-    ids.add(`${conversion.v2Binding.implementationIdentity.familyImplementationId}@${conversion.v2Binding.implementationIdentity.version}`);
-    byFamily.set(conversion.v2Binding.familyId, ids);
+  return { ok: true, path: join(rootDir, DEFAULT_CONFIG_CANDIDATES[0]), exists: false };
+}
+function serializeConfig(filePath, data) {
+  const isYaml = filePath.endsWith(".yaml") || filePath.endsWith(".yml");
+  if (isYaml) {
+    return yamlStringify(data);
   }
-  for (const [familyId, ids] of byFamily) {
-    if (ids.size > 1) {
-      collisions.push({
-        ref: familyId,
-        type: "unsafe-aggregation",
-        details: `Family ${familyId} maps to ${ids.size} implementations; choose one atomic family release`
-      });
+  return JSON.stringify(data, null, 2) + "\n";
+}
+function collectCatalogRefs(catalogs) {
+  if (!catalogs || catalogs.length === 0) return void 0;
+  const refs = /* @__PURE__ */ new Set();
+  for (const cat of catalogs) {
+    if (cat && typeof cat === "object" && Array.isArray(cat.entries)) {
+      for (const entry of cat.entries) {
+        if (typeof entry?.ref === "string") refs.add(entry.ref);
+      }
     }
   }
-  return { hasCollisions: collisions.length > 0, collisions };
+  return refs;
 }
-function computeMigrationPlanDigest(plan) {
-  const { planDigest: _ignored, ...withoutSelf } = plan;
-  return computeContentHash(withoutSelf);
+function matchesFamilyBinding(binding, methodId) {
+  return binding.familyId === methodId || binding.apiIdentity.apiId === methodId || binding.implementationIdentity.familyImplementationId === methodId;
 }
-function generateMigrationPlan(v1Entries, v1Overrides, context) {
-  const syntheticIdentities = v1Entries.map(generateSyntheticIdentity).sort((a, b) => a.v1Ref.localeCompare(b.v1Ref));
-  const bindingConversions = [];
-  const unresolved = [];
-  const targetFiles = {};
-  for (const override of [...v1Overrides].sort((a, b) => a.ref.localeCompare(b.ref))) {
-    const mapping = context.mappings.find((candidate) => candidate.ref === override.ref);
-    if (!mapping) {
-      unresolved.push({ ref: override.ref, type: "unresolved-mapping", details: "No explicit migration mapping was supplied" });
-      continue;
-    }
-    const conversion = convertOverrideToBinding(override, mapping);
-    bindingConversions.push(conversion);
-    if (Object.hasOwn(targetFiles, mapping.targetPath)) {
-      unresolved.push({ ref: override.ref, type: "binding-collision", details: `Multiple conversions target ${mapping.targetPath}` });
-    } else {
-      targetFiles[mapping.targetPath] = { documentKind: "v2-binding", schemaVersion: 2, bindings: [conversion.v2Binding] };
-    }
-  }
-  const collisionReport = detectCollisions(syntheticIdentities, bindingConversions, []);
-  collisionReport.collisions.push(...unresolved);
-  collisionReport.hasCollisions = collisionReport.collisions.length > 0;
-  const draft = {
-    documentKind: "v2-migration-plan",
-    schemaVersion: 2,
-    syntheticIdentities,
-    bindingConversions,
-    collisionReport,
-    sourceManifest: [...context.sourceManifest].sort((a, b) => a.path.localeCompare(b.path)),
-    targetFiles: Object.fromEntries(Object.entries(targetFiles).sort(([a], [b]) => a.localeCompare(b)))
-  };
-  return { ...draft, planDigest: computeMigrationPlanDigest(draft) };
+function matchesServiceBinding(binding, methodId) {
+  return binding.serviceId === methodId || binding.familyId === methodId || binding.apiIdentity.apiId === methodId || binding.implementationIdentity.familyImplementationId === methodId;
 }
-function nearestExistingAncestor(path) {
-  let cursor = path;
-  while (!existsSync(cursor)) {
-    const parent = dirname(cursor);
-    if (parent === cursor) break;
-    cursor = parent;
+function unbindProjectMethod(options) {
+  const { methodId, catalogs, includeDisabled = false, dryRun = false } = options;
+  const resolved = resolveTargetConfigPath(options);
+  if (!resolved.ok) return resolved;
+  if (!resolved.exists) {
+    return {
+      ok: true,
+      data: {
+        methodId,
+        projectPath: resolved.path,
+        protocol: "none",
+        status: "not-bound",
+        changed: false,
+        removedFrom: [],
+        fileRemoved: false,
+        dryRun,
+        remainingValid: true
+      },
+      diagnostics: [{
+        code: "NO_QUERY_MATCH",
+        severity: "info",
+        message: `Method "${methodId}" is not bound because project configuration "${resolved.path}" does not exist.`,
+        source: { label: "<project>" }
+      }]
+    };
   }
-  return cursor;
-}
-function validateTransactionPath(targetPath, transactionRoot) {
-  if (isAbsolute(targetPath) || targetPath.split(/[\\/]+/).includes("..")) {
-    return { ok: false, reason: `Target path must be relative and must not contain ..: ${targetPath}` };
-  }
-  const resolvedRoot = realpathSync(transactionRoot);
-  const resolvedTarget = resolve(resolvedRoot, targetPath);
-  const relFromRoot = relative(resolvedRoot, resolvedTarget);
-  if (relFromRoot.startsWith("..") || isAbsolute(relFromRoot)) {
-    return { ok: false, reason: `Target path escapes transaction root: ${targetPath}` };
-  }
-  const ancestor = nearestExistingAncestor(resolvedTarget);
-  const realAncestor = realpathSync(ancestor);
-  const relAncestor = relative(resolvedRoot, realAncestor);
-  if (relAncestor.startsWith("..") || isAbsolute(relAncestor)) {
-    return { ok: false, reason: `Target path crosses a symlink outside transaction root: ${targetPath}` };
-  }
-  if (existsSync(resolvedTarget) && lstatSync(resolvedTarget).isSymbolicLink()) {
-    return { ok: false, reason: `Target path must not be a symlink: ${targetPath}` };
-  }
-  return { ok: true };
-}
-function generateMigrationSnapshot(plan, transactionRoot, timestamp) {
-  const originalBytes = {};
-  const appliedDigests = {};
-  for (const filePath of Object.keys(plan.targetFiles)) {
-    const check = validateTransactionPath(filePath, transactionRoot);
-    if (!check.ok) throw new Error(check.reason);
-    const fullPath = resolve(transactionRoot, filePath);
-    originalBytes[filePath] = existsSync(fullPath) ? readFileSync(fullPath).toString("base64") : "__NOT_EXISTS__";
-    const appliedBytes = Buffer.from(JSON.stringify(plan.targetFiles[filePath], null, 2) + "\n", "utf-8");
-    appliedDigests[filePath] = computeContentHash(appliedBytes.toString("base64"));
-  }
-  const snapshotDigest = computeContentHash({ planDigest: plan.planDigest, originalBytes, appliedDigests, timestamp });
-  return { schemaVersion: 2, snapshotDigest, timestamp, planDigest: plan.planDigest, originalBytes, appliedDigests };
-}
-function applyMigrationPlan(plan, transactionRoot, timestamp) {
-  if (computeMigrationPlanDigest(plan) !== plan.planDigest) {
-    return { ok: false, diagnostics: [{ code: "SNAPSHOT_TAMPERED", severity: "error", message: "Migration plan digest mismatch" }] };
-  }
-  if (plan.collisionReport.hasCollisions || plan.collisionReport.collisions.length > 0) {
-    return { ok: false, diagnostics: [{ code: "COLLISION_DETECTED", severity: "error", message: "Migration plan contains collisions or unresolved mappings" }] };
-  }
-  for (const source of plan.sourceManifest) {
-    const check = validateTransactionPath(source.path, transactionRoot);
-    if (!check.ok) return { ok: false, diagnostics: [{ code: "OUTPUT_WRITE_FAILED", severity: "error", message: check.reason }] };
-    const fullPath = resolve(transactionRoot, source.path);
-    if (!existsSync(fullPath) || computeContentHash(readFileSync(fullPath).toString("base64")) !== source.digest) {
-      return { ok: false, diagnostics: [{ code: "SNAPSHOT_TAMPERED", severity: "error", message: `Migration source drift: ${source.path}` }] };
-    }
-  }
-  for (const filePath of Object.keys(plan.targetFiles)) {
-    const check = validateTransactionPath(filePath, transactionRoot);
-    if (!check.ok) return { ok: false, diagnostics: [{ code: "OUTPUT_WRITE_FAILED", severity: "error", message: check.reason }] };
-  }
-  let snapshot;
-  const writtenPaths = [];
+  let parsedRaw;
   try {
-    snapshot = generateMigrationSnapshot(plan, transactionRoot, timestamp);
-    for (const [filePath, content] of Object.entries(plan.targetFiles)) {
-      const fullPath = resolve(transactionRoot, filePath);
-      mkdirSync(dirname(fullPath), { recursive: true });
-      const tempPath = resolve(dirname(fullPath), `.${basename(fullPath)}.migration-${process.pid}`);
-      writeFileSync(tempPath, JSON.stringify(content, null, 2) + "\n", "utf-8");
-      renameSync(tempPath, fullPath);
-      writtenPaths.push(filePath);
-    }
-  } catch (error) {
-    if (snapshot) restoreSnapshotPaths(snapshot, transactionRoot, writtenPaths);
-    return { ok: false, diagnostics: [{ code: "OUTPUT_WRITE_FAILED", severity: "error", message: error instanceof Error ? error.message : String(error) }] };
+    const rawText = readFileSync(resolved.path, "utf-8");
+    const isYaml = resolved.path.endsWith(".yaml") || resolved.path.endsWith(".yml");
+    parsedRaw = isYaml ? yamlParse(rawText) : JSON.parse(rawText);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return {
+      ok: false,
+      diagnostics: [{
+        code: "INPUT_READ_FAILED",
+        severity: "error",
+        message: `Failed to parse project configuration "${resolved.path}": ${msg}`,
+        source: { label: "<project>" },
+        suggestion: "Fix the YAML/JSON syntax error in the project configuration before unbinding."
+      }]
+    };
   }
-  return { ok: true, snapshot, diagnostics: [] };
-}
-function rollbackMigration(snapshot, transactionRoot) {
-  const recomputed = computeContentHash({
-    planDigest: snapshot.planDigest,
-    originalBytes: snapshot.originalBytes,
-    appliedDigests: snapshot.appliedDigests,
-    timestamp: snapshot.timestamp
+  const initialValidation = validateProjectOverlay(parsedRaw);
+  if (!initialValidation.ok) {
+    return { ok: false, diagnostics: initialValidation.diagnostics };
+  }
+  const isV2Binding = parsedRaw !== null && typeof parsedRaw === "object" && parsedRaw.documentKind === "v2-binding";
+  if (isV2Binding) {
+    const doc = initialValidation.data;
+    const removedFrom = [];
+    const nextFamilyBindings = doc.bindings.filter((b) => !matchesFamilyBinding(b, methodId));
+    const removedFamilies = doc.bindings.filter((b) => matchesFamilyBinding(b, methodId));
+    if (removedFamilies.length > 0) removedFrom.push("bindings");
+    const removedFamilyApiIds = new Set(removedFamilies.map((b) => b.apiIdentity.apiId));
+    const currentServiceBindings = doc.serviceBindings ?? [];
+    const nextServiceBindings = currentServiceBindings.filter(
+      (sb) => !matchesServiceBinding(sb, methodId) && !removedFamilyApiIds.has(sb.apiIdentity.apiId)
+    );
+    if (nextServiceBindings.length < currentServiceBindings.length) {
+      removedFrom.push("serviceBindings");
+    }
+    if (removedFrom.length === 0) {
+      const atomicOwner = doc.bindings.find(
+        (b) => validateServiceIdFamily(methodId, b.apiIdentity.apiId) === void 0
+      );
+      if (atomicOwner) {
+        return {
+          ok: false,
+          diagnostics: [{
+            code: "BINDING_INVALID",
+            severity: "error",
+            message: `Service "${methodId}" is governed by atomic family binding "${atomicOwner.apiIdentity.apiId}" (familyId: "${atomicOwner.familyId}") and cannot be unbound individually.`,
+            source: { label: "<project>" },
+            suggestion: `Unbind the entire family via "${atomicOwner.familyId}" or "${atomicOwner.apiIdentity.apiId}".`
+          }]
+        };
+      }
+      return {
+        ok: true,
+        data: {
+          methodId,
+          projectPath: resolved.path,
+          protocol: "v2-binding",
+          status: "not-bound",
+          changed: false,
+          removedFrom: [],
+          fileRemoved: false,
+          dryRun,
+          remainingValid: true
+        },
+        diagnostics: [{
+          code: "NO_QUERY_MATCH",
+          severity: "info",
+          message: `Method "${methodId}" has no active entry in v2 binding file "${resolved.path}".`,
+          source: { label: "<project>" }
+        }]
+      };
+    }
+    if (nextFamilyBindings.length === 0 && nextServiceBindings.length === 0) {
+      if (!dryRun) {
+        try {
+          unlinkSync(resolved.path);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          return {
+            ok: false,
+            diagnostics: [{ code: "OUTPUT_WRITE_FAILED", severity: "error", message: `Failed to remove empty binding file "${resolved.path}": ${msg}` }]
+          };
+        }
+      }
+      return {
+        ok: true,
+        data: {
+          methodId,
+          projectPath: resolved.path,
+          protocol: "v2-binding",
+          status: "unbound",
+          changed: true,
+          removedFrom,
+          fileRemoved: true,
+          dryRun,
+          remainingValid: true
+        },
+        diagnostics: []
+      };
+    }
+    const nextDoc = {
+      documentKind: "v2-binding",
+      schemaVersion: 2,
+      bindings: nextFamilyBindings,
+      ...nextServiceBindings.length > 0 ? { serviceBindings: nextServiceBindings } : {}
+    };
+    const postValidation = validateProjectOverlay(nextDoc);
+    if (!postValidation.ok) {
+      return { ok: false, diagnostics: postValidation.diagnostics };
+    }
+    if (!dryRun) {
+      try {
+        writeFileSync(resolved.path, serializeConfig(resolved.path, nextDoc), "utf-8");
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return {
+          ok: false,
+          diagnostics: [{ code: "OUTPUT_WRITE_FAILED", severity: "error", message: `Failed to write "${resolved.path}": ${msg}` }]
+        };
+      }
+    }
+    return {
+      ok: true,
+      data: {
+        methodId,
+        projectPath: resolved.path,
+        protocol: "v2-binding",
+        status: "unbound",
+        changed: true,
+        removedFrom,
+        fileRemoved: false,
+        dryRun,
+        remainingValid: true
+      },
+      diagnostics: []
+    };
+  }
+  return unbindV1Overlay(initialValidation.data, resolved.path, {
+    methodId,
+    catalogs,
+    includeDisabled,
+    dryRun
   });
-  if (recomputed !== snapshot.snapshotDigest) {
-    return { ok: false, restoredPaths: [], diagnostics: [{ code: "SNAPSHOT_TAMPERED", severity: "error", message: "Snapshot digest mismatch" }] };
-  }
-  for (const [filePath, expectedDigest] of Object.entries(snapshot.appliedDigests)) {
-    const check = validateTransactionPath(filePath, transactionRoot);
-    if (!check.ok) return { ok: false, restoredPaths: [], diagnostics: [{ code: "OUTPUT_WRITE_FAILED", severity: "error", message: check.reason }] };
-    const fullPath = resolve(transactionRoot, filePath);
-    if (!existsSync(fullPath)) {
-      return { ok: false, restoredPaths: [], diagnostics: [{ code: "SNAPSHOT_TAMPERED", severity: "error", message: `Rollback target drift: ${filePath} no longer exists` }] };
-    }
-    const actualDigest = computeContentHash(readFileSync(fullPath).toString("base64"));
-    if (actualDigest !== expectedDigest) {
-      return { ok: false, restoredPaths: [], diagnostics: [{ code: "SNAPSHOT_TAMPERED", severity: "error", message: `Rollback target drift: ${filePath} changed after migration apply` }] };
-    }
-  }
-  const restoredPaths = restoreSnapshotPaths(snapshot, transactionRoot, Object.keys(snapshot.originalBytes));
-  return { ok: true, restoredPaths, diagnostics: [] };
 }
-function restoreSnapshotPaths(snapshot, transactionRoot, paths) {
-  const restoredPaths = [];
-  for (const filePath of paths) {
-    const base64Content = snapshot.originalBytes[filePath];
-    if (base64Content === void 0) continue;
-    const fullPath = resolve(transactionRoot, filePath);
-    if (base64Content === "__NOT_EXISTS__") {
-      if (existsSync(fullPath)) unlinkSync(fullPath);
-    } else {
-      mkdirSync(dirname(fullPath), { recursive: true });
-      writeFileSync(fullPath, Buffer.from(base64Content, "base64"));
-    }
-    restoredPaths.push(filePath);
+function unbindV1Overlay(overlay, filePath, opts) {
+  const { methodId, catalogs, includeDisabled, dryRun } = opts;
+  const removedFrom = [];
+  const nextOverrides = overlay.overrides ? { ...overlay.overrides } : void 0;
+  if (nextOverrides && Object.prototype.hasOwnProperty.call(nextOverrides, methodId)) {
+    delete nextOverrides[methodId];
+    removedFrom.push("overrides");
   }
-  return restoredPaths;
+  const hadProjectEntry = (overlay.entries ?? []).some((e) => e.ref === methodId);
+  const nextEntries = overlay.entries ? overlay.entries.filter((e) => e.ref !== methodId) : void 0;
+  if (hadProjectEntry) {
+    removedFrom.push("entries");
+  }
+  const catalogRefs = collectCatalogRefs(catalogs);
+  const shouldCleanDisabled = includeDisabled || hadProjectEntry || catalogRefs !== void 0 && !catalogRefs.has(methodId);
+  let nextDisabled = overlay.disabled ? [...overlay.disabled] : void 0;
+  if (nextDisabled && shouldCleanDisabled && nextDisabled.includes(methodId)) {
+    nextDisabled = nextDisabled.filter((ref) => ref !== methodId);
+    removedFrom.push("disabled");
+  }
+  const nextOverlay = {
+    schemaVersion: 1,
+    ...nextEntries && nextEntries.length > 0 ? { entries: nextEntries } : {},
+    ...nextOverrides && Object.keys(nextOverrides).length > 0 ? { overrides: nextOverrides } : {},
+    ...nextDisabled && nextDisabled.length > 0 ? { disabled: nextDisabled } : {}
+  };
+  const postValidation = validateProjectOverlay(nextOverlay);
+  if (!postValidation.ok) {
+    return { ok: false, diagnostics: postValidation.diagnostics };
+  }
+  if (catalogs && catalogs.length > 0) {
+    const mergedCheck = buildEffectiveIndex({ catalogs, project: nextOverlay });
+    if (!mergedCheck.ok) {
+      return { ok: false, diagnostics: mergedCheck.diagnostics };
+    }
+  }
+  if (removedFrom.length === 0) {
+    const isStillDisabled = (overlay.disabled ?? []).includes(methodId);
+    const note = isStillDisabled ? `Method "${methodId}" has no active override or project entry in "${filePath}" (currently listed in "disabled"; pass --include-disabled to also clear the disable rule).` : `Method "${methodId}" is not bound in "${filePath}".`;
+    return {
+      ok: true,
+      data: {
+        methodId,
+        projectPath: filePath,
+        protocol: "v1-overlay",
+        status: "not-bound",
+        changed: false,
+        removedFrom: [],
+        fileRemoved: false,
+        dryRun,
+        remainingValid: true
+      },
+      diagnostics: [{
+        code: "NO_QUERY_MATCH",
+        severity: "info",
+        message: note,
+        source: { label: "<project>" }
+      }]
+    };
+  }
+  if (!dryRun) {
+    try {
+      writeFileSync(filePath, serializeConfig(filePath, nextOverlay), "utf-8");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return {
+        ok: false,
+        diagnostics: [{ code: "OUTPUT_WRITE_FAILED", severity: "error", message: `Failed to write "${filePath}": ${msg}` }]
+      };
+    }
+  }
+  return {
+    ok: true,
+    data: {
+      methodId,
+      projectPath: filePath,
+      protocol: "v1-overlay",
+      status: "unbound",
+      changed: true,
+      removedFrom,
+      fileRemoved: false,
+      dryRun,
+      remainingValid: true
+    },
+    diagnostics: []
+  };
 }
 
 // src/cli.ts
 function parseArgs(argv) {
   const args = argv.slice(2);
   const positional = [];
-  const flags = {};
+  const flags = /* @__PURE__ */ Object.create(null);
   let command;
   let i = 0;
   while (i < args.length) {
     const arg = args[i];
-    if (arg.startsWith("--")) {
+    if (arg === "-h" || arg === "--help") {
+      if (!Object.prototype.hasOwnProperty.call(flags, "help")) flags["help"] = [];
+      flags["help"].push("");
+      i += 1;
+    } else if (arg.startsWith("--")) {
       const flagName = arg.slice(2);
-      if (i + 1 < args.length && !args[i + 1].startsWith("--")) {
+      if (i + 1 < args.length && !args[i + 1].startsWith("--") && args[i + 1] !== "-h") {
         const value = args[i + 1];
-        if (!flags[flagName]) flags[flagName] = [];
+        if (!Object.prototype.hasOwnProperty.call(flags, flagName)) flags[flagName] = [];
         flags[flagName].push(value);
         i += 2;
       } else {
-        if (!flags[flagName]) flags[flagName] = [];
+        if (!Object.prototype.hasOwnProperty.call(flags, flagName)) flags[flagName] = [];
         flags[flagName].push("");
         i += 1;
       }
@@ -295,13 +434,13 @@ function parseArgs(argv) {
   return { command, positional, flags };
 }
 function hasFlag(parsed, name) {
-  return name in parsed.flags;
+  return Object.prototype.hasOwnProperty.call(parsed.flags, name);
 }
 function getFlag(parsed, name) {
-  return parsed.flags[name]?.[0];
+  return Object.prototype.hasOwnProperty.call(parsed.flags, name) ? parsed.flags[name]?.[0] : void 0;
 }
 function getAllFlags(parsed, name) {
-  return parsed.flags[name] ?? [];
+  return Object.prototype.hasOwnProperty.call(parsed.flags, name) ? parsed.flags[name] ?? [] : [];
 }
 var ExitError = class extends Error {
   constructor(exitCode) {
@@ -335,7 +474,7 @@ function readInput(filePath) {
   }
   try {
     const isYaml = filePath.endsWith(".yaml") || filePath.endsWith(".yml");
-    const data = isYaml ? yamlParse(raw) : JSON.parse(raw);
+    const data = isYaml ? yamlParse2(raw) : JSON.parse(raw);
     return { ok: true, data };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -369,22 +508,30 @@ function writeOutput(filePath, data) {
     };
   }
 }
-function usageError(message) {
+function usageError(message, suggestion) {
   emit(
-    { ok: false, diagnostics: [{ code: "CLI_USAGE_ERROR", severity: "error", message }] },
+    {
+      ok: false,
+      diagnostics: [{
+        code: "CLI_USAGE_ERROR",
+        severity: "error",
+        message,
+        ...suggestion ? { suggestion } : {}
+      }]
+    },
     2
   );
 }
 function requireFlag(parsed, name) {
   if (!hasFlag(parsed, name)) {
-    usageError(`Missing required --${name} flag`);
+    usageError(`Missing required --${name} flag`, `Pass --${name} <value> or run with --help to inspect command options.`);
   }
   const values = getAllFlags(parsed, name);
   if (values.length > 1) {
-    usageError(`Duplicate --${name} flag`);
+    usageError(`Duplicate --${name} flag`, `Specify --${name} at most once.`);
   }
   if (values[0] === "") {
-    usageError(`--${name} requires a value`);
+    usageError(`--${name} requires a value`, `Provide a non-empty value after --${name}.`);
   }
   return values[0];
 }
@@ -623,10 +770,13 @@ function cmdResolve(parsed) {
   const indexPath = requireFlag(parsed, "index");
   const ref = requireFlag(parsed, "ref");
   const hostStr = requireFlag(parsed, "host");
-  if (hostStr !== "claude-code" && hostStr !== "codex") {
-    usageError(`Invalid --host value: ${JSON.stringify(hostStr)}. Must be 'claude-code' or 'codex'`);
+  if (!isSupportedHost(hostStr)) {
+    usageError(
+      `Invalid --host value: ${JSON.stringify(hostStr)}. Must be one of ${formatSupportedHosts()}`,
+      `Pass a supported host identifier such as --host codex, --host claude-code (or --host claude), --host antigravity (or --host antigravity-ide / --host agy), --host kimi (or --host kimi-code), --host qoder, --host codebuddy, --host workbuddy, --host grok, --host cursor, or --host deepseek-harness (or --host dsh).`
+    );
   }
-  const host = hostStr;
+  const host = normalizeHostId(hostStr);
   const pluginRootValues = requireNonEmptyRepeated(parsed, "plugin-root");
   const projectRootValues = requireNonEmptyRepeated(parsed, "project-root");
   const input = readInput(indexPath);
@@ -662,11 +812,22 @@ function cmdResolve(parsed) {
       }]
     }, 1);
   }
-  let pluginRoots;
-  if (pluginRootValues.length > 0 && entry.provider.scope === "plugin") {
-    pluginRoots = { [entry.provider.plugin]: pluginRootValues };
+  let effectivePluginRoots = pluginRootValues;
+  if (effectivePluginRoots.length === 0 && host === "antigravity" && entry.provider.scope === "plugin") {
+    effectivePluginRoots = discoverDefaultAntigravityRoots({
+      scope: "plugin",
+      pluginId: entry.provider.plugin
+    });
   }
-  const projectRoots = projectRootValues.length > 0 ? projectRootValues : void 0;
+  let pluginRoots;
+  if (effectivePluginRoots.length > 0 && entry.provider.scope === "plugin") {
+    pluginRoots = { [entry.provider.plugin]: effectivePluginRoots };
+  }
+  let effectiveProjectRoots = projectRootValues;
+  if (effectiveProjectRoots.length === 0 && host === "antigravity" && entry.provider.scope === "project") {
+    effectiveProjectRoots = discoverDefaultAntigravityRoots({ scope: "project" });
+  }
+  const projectRoots = effectiveProjectRoots.length > 0 ? effectiveProjectRoots : void 0;
   const result = resolveEntry({
     index,
     ref,
@@ -832,7 +993,7 @@ function cmdMigrateDryRun(parsed, transactionRoot) {
     }
     const dir = dirname2(resolvedPath);
     if (!existsSync2(dir)) {
-      mkdirSync2(dir, { recursive: true });
+      mkdirSync(dir, { recursive: true });
     }
     writeFileSync2(resolvedPath, JSON.stringify(plan, null, 2) + "\n", "utf-8");
   }
@@ -879,7 +1040,7 @@ function cmdMigrateApply(parsed, transactionRoot) {
   const resolvedSnapshot = resolve2(transactionRoot, snapshotPath);
   const snapDir = dirname2(resolvedSnapshot);
   if (!existsSync2(snapDir)) {
-    mkdirSync2(snapDir, { recursive: true });
+    mkdirSync(snapDir, { recursive: true });
   }
   writeFileSync2(resolvedSnapshot, JSON.stringify(result.snapshot, null, 2) + "\n", "utf-8");
   emit({
@@ -1123,8 +1284,105 @@ function cmdMigrateRollback(parsed, transactionRoot) {
     diagnostics: []
   }, 0);
 }
+var UNBIND_ALLOWED_FLAGS = /* @__PURE__ */ new Set([
+  "project",
+  "project-root",
+  "method",
+  "ref",
+  "catalog",
+  "include-disabled",
+  "dry-run"
+]);
+function cmdUnbind(parsed) {
+  rejectUnknownFlags(parsed, UNBIND_ALLOWED_FLAGS);
+  rejectExtraPositionals(parsed, 2);
+  const positionalMethod = parsed.positional[1];
+  const flagMethod = optionalSingleton(parsed, "method");
+  const flagRef = optionalSingleton(parsed, "ref");
+  const providedIds = [positionalMethod, flagMethod, flagRef].filter(
+    (v) => v !== void 0 && v.length > 0
+  );
+  if (providedIds.length === 0) {
+    usageError(
+      "unbind requires a target <method-id> (positional or via --method <id> / --ref <id>)",
+      "Example: agent-method-registry unbind humanize-rewrite --project agent-methods.yaml"
+    );
+  }
+  if (new Set(providedIds).size > 1) {
+    usageError(
+      "Conflicting method identifiers supplied via positional argument and --method / --ref flags",
+      "Pass the target method identifier once."
+    );
+  }
+  const methodId = providedIds[0];
+  const projectPath = optionalSingleton(parsed, "project");
+  const projectRoot = optionalSingleton(parsed, "project-root");
+  if (!projectPath && !projectRoot) {
+    usageError(
+      "unbind requires either --project <file> or --project-root <dir>",
+      "Pass --project agent-methods.yaml (or v2 binding file) or --project-root ."
+    );
+  }
+  if (projectPath && projectRoot) {
+    usageError(
+      "unbind accepts either --project <file> or --project-root <dir>, not both",
+      "Use --project for an explicit config path or --project-root to auto-discover agent-methods.yaml."
+    );
+  }
+  const catalogPaths = requireNonEmptyRepeated(parsed, "catalog");
+  const catalogDatas = [];
+  const readDiags = [];
+  for (const catPath of catalogPaths) {
+    const input = readInput(catPath);
+    if (!input.ok) {
+      readDiags.push(...input.diagnostics);
+    } else {
+      catalogDatas.push(input.data);
+    }
+  }
+  if (readDiags.length > 0) {
+    emit({ ok: false, diagnostics: readDiags }, 1);
+  }
+  const result = unbindProjectMethod({
+    methodId,
+    projectPath,
+    projectRoot,
+    ...catalogDatas.length > 0 ? { catalogs: catalogDatas } : {},
+    includeDisabled: hasFlag(parsed, "include-disabled"),
+    dryRun: hasFlag(parsed, "dry-run")
+  });
+  if (!result.ok) {
+    emit({ ok: false, diagnostics: result.diagnostics }, 1);
+  }
+  emit({ ok: true, data: result.data, diagnostics: result.diagnostics }, 0);
+}
+function cmdHelp() {
+  emit(
+    {
+      ok: true,
+      data: {
+        commands: {
+          validate: "agent-method-registry validate --catalog <file>... [--project <overlay-or-binding>]",
+          index: "agent-method-registry index --catalog <file>... [--project <overlay>] [--out <index.json>]",
+          query: "agent-method-registry query --index <file> [--candidate <file> | --domain <d> --artifact-type <t> --intent <i> --kind <workflow|operation> --limit <1..8> --format <compact|full>]",
+          resolve: "agent-method-registry resolve --index <file> --ref <id> --host <host> [--plugin-root <dir>...] [--project-root <dir>...]",
+          unbind: "agent-method-registry unbind <method-id> (--project <file> | --project-root <dir>) [--catalog <file>...] [--include-disabled] [--dry-run]",
+          migrate: "agent-method-registry migrate (--dry-run | --apply | --rollback) ...",
+          diagnose: "agent-method-registry diagnose --mode <professional-scan|read-proof> ..."
+        },
+        supportedHosts: [...SUPPORTED_HOST_LIST]
+      },
+      diagnostics: []
+    },
+    0
+  );
+}
 function run(argv) {
   const parsed = parseArgs(argv);
+  if (hasFlag(parsed, "help") || parsed.command === "help") {
+    cmdHelp();
+    return;
+  }
   switch (parsed.command) {
     case "validate":
       cmdValidate(parsed);
@@ -1137,6 +1395,9 @@ function run(argv) {
       break;
     case "resolve":
       cmdResolve(parsed);
+      break;
+    case "unbind":
+      cmdUnbind(parsed);
       break;
     case "migrate":
       cmdMigrate(parsed);
@@ -1151,7 +1412,8 @@ function run(argv) {
             {
               code: "CLI_USAGE_ERROR",
               severity: "error",
-              message: parsed.command ? `Unknown command: ${parsed.command}` : "No command specified. Use: validate | index | query | resolve | migrate | diagnose"
+              message: parsed.command ? `Unknown command: ${parsed.command}` : "No command specified. Use: validate | index | query | resolve | unbind | migrate | diagnose",
+              suggestion: "Run `agent-method-registry --help` (read-only) to inspect available commands and flags."
             }
           ]
         },

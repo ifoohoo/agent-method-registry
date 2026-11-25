@@ -1,33 +1,35 @@
 {
   "title": "Plugin Catalog",
-  "description": "JSON Schema for a plugin catalog in the agent-method-registry protocol",
+  "description": "agent-method-registry v1 插件方法目录 Schema：声明插件对外提供的技能与工作流入口、匹配维度及副作用边界。",
   "type": "object",
   "additionalProperties": false,
   "required": ["schemaVersion", "catalog", "entries"],
   "properties": {
     "schemaVersion": {
       "const": 1,
-      "description": "Must be exactly 1 for the current protocol version"
+      "description": "v1 目录协议版本号，固定为 1。"
     },
     "catalog": {
       "type": "object",
       "additionalProperties": false,
+      "description": "目录所属插件的身份与版本元信息。",
       "required": ["id", "version"],
       "properties": {
         "id": {
           "type": "string",
           "minLength": 1,
-          "description": "Stable plugin identifier"
+          "description": "稳定的插件唯一标识，所有插件作用域条目的 provider.plugin 必须与此值一致。"
         },
         "version": {
           "type": "string",
           "minLength": 1,
-          "description": "Semantic version of the catalog"
+          "description": "当前目录清单的语义化版本号。"
         }
       }
     },
     "entries": {
       "type": "array",
+      "description": "本目录声明的方法条目列表，合并时按逻辑 ref 全局去重与冲突检测。",
       "items": {
         "$ref": "#/$defs/pluginEntry"
       }
@@ -37,48 +39,57 @@
     "pluginProvider": {
       "type": "object",
       "additionalProperties": false,
+      "description": "插件作用域的方法提供方定位信息，指向插件根目录下的具体技能目录。",
       "required": ["scope", "plugin", "skill"],
       "properties": {
         "scope": {
-          "const": "plugin"
+          "const": "plugin",
+          "description": "提供方作用域，插件目录内固定为 plugin。"
         },
         "plugin": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "description": "提供该技能的插件标识，须等于顶层 catalog.id。"
         },
         "skill": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "description": "相对于插件根目录的技能子目录路径（目录下须存在 SKILL.md）。"
         }
       }
     },
     "match": {
       "type": "object",
       "additionalProperties": false,
+      "description": "方法检索匹配条件，查询时多维条件按逻辑与（AND）组合过滤。",
       "required": ["domains", "artifactTypes", "intents"],
       "properties": {
         "domains": {
           "type": "array",
           "items": { "type": "string", "minLength": 1 },
           "minItems": 1,
-          "uniqueItems": true
+          "uniqueItems": true,
+          "description": "适用的业务或语言领域列表（如 artifact、zh-CN、docs）。"
         },
         "artifactTypes": {
           "type": "array",
           "items": { "type": "string", "minLength": 1 },
           "minItems": 1,
-          "uniqueItems": true
+          "uniqueItems": true,
+          "description": "适用的目标制品类型列表（如 user-story、document、spec）。"
         },
         "intents": {
           "type": "array",
           "items": { "type": "string", "minLength": 1 },
           "minItems": 1,
-          "uniqueItems": true
+          "uniqueItems": true,
+          "description": "支持的任务意图列表（如 author、rewrite、review、validate）。"
         }
       }
     },
     "sideEffects": {
       "type": "array",
+      "description": "执行该方法可能产生的副作用声明，调用方据此核对写入或外发授权。",
       "items": {
         "type": "string",
         "enum": ["read-only", "write-project-artifacts", "external-state-change"]
@@ -89,25 +100,27 @@
     "pluginEntry": {
       "type": "object",
       "additionalProperties": false,
+      "description": "单条插件方法注册记录，定义稳定的逻辑名称、入口技能与输入输出契约。",
       "required": ["ref", "provider", "kind", "summary", "match", "accepts", "produces", "sideEffects"],
       "properties": {
         "ref": {
           "type": "string",
           "minLength": 1,
           "maxLength": 128,
-          "description": "Logical entry ID, stable across versions"
+          "description": "跨版本稳定的逻辑方法引用 ID（如 humanize-rewrite 或 artifact.prd-feature.author）。"
         },
         "provider": {
           "$ref": "#/$defs/pluginProvider"
         },
         "kind": {
           "type": "string",
-          "enum": ["workflow", "operation"]
+          "enum": ["workflow", "operation"],
+          "description": "方法形态：workflow 表示多步编排或创作流程，operation 表示单步原子操作。"
         },
         "summary": {
           "type": "string",
           "maxLength": 160,
-          "description": "Human-readable summary, max 160 Unicode code points"
+          "description": "面向人类与规划器阅读的一句话职责说明（最长 160 个字符），交代默认行为与项目覆盖方式。"
         },
         "match": {
           "$ref": "#/$defs/match"
@@ -116,13 +129,15 @@
           "type": "array",
           "items": { "type": "string", "minLength": 1 },
           "minItems": 1,
-          "uniqueItems": true
+          "uniqueItems": true,
+          "description": "调用该方法所需准备的输入材料标识列表。"
         },
         "produces": {
           "type": "array",
           "items": { "type": "string", "minLength": 1 },
           "minItems": 1,
-          "uniqueItems": true
+          "uniqueItems": true,
+          "description": "该方法完成后产出的候选物或报告标识列表。"
         },
         "sideEffects": {
           "$ref": "#/$defs/sideEffects"

@@ -1,91 +1,67 @@
-# Installation
+# Installation & Project Setup
 
 ## Requirements
 
 - Node.js `>=22.0.0`
 
-## npm
+## Install via npm or pnpm
 
 ```bash
 npm install agent-method-registry
-```
-
-## pnpm
-
-```bash
+# or
 pnpm add agent-method-registry
 ```
 
-## CLI Usage
+## Quick CLI verification
 
-After installation, the CLI is available as `agent-method-registry`:
+Verify the installed binary without modifying any project files:
 
 ```bash
+npx agent-method-registry --help
 npx agent-method-registry validate --catalog catalog.yaml
 npx agent-method-registry query --index index.json
-npx agent-method-registry diagnose --mode professional-scan \
-  --input-root . --input diagnose-request.json --subject my-registry
-npx agent-method-registry diagnose --mode read-proof \
-  --proof-root . --proof conclusion.json
 ```
 
-`diagnose --mode professional-scan` reads one explicit `DiagnoseInput` JSON file. It does not walk
-the directory for catalogs. `--conclusion-output` is optional, must be an absolute path, and
-creates a new file instead of replacing one. `diagnose --mode read-proof` only reads the named
-proof; it does not re-scan the target or execute cataloged methods.
+### Supported host identifiers
 
-## Skill-family adoption (v2 protocol, available since 0.2.0)
+`resolve`, `verifyProvider`, `buildEffectiveIndex`, and `diagnoseRegistry` share a unified host registry:
 
-Installing a family plugin only adds an inventory candidate. It does not enable, trust, or bind the
-implementation. A project adopting a v2 family should:
+- `codex`
+- `claude-code` (compatible with `claude` alias)
+- `antigravity` (compatible with `antigravity-ide` and `agy` CLI aliases; supports `.agents/skills`, `.agent/skills`, `~/.gemini/config/skills`, and `~/.gemini/config/plugins/*/skills`)
+- `kimi` (compatible with `kimi-code` host profiles)
+- `qoder`
+- `codebuddy`
+- `workbuddy`
+- `grok`
+- `cursor`
+- `deepseek-harness` (compatible with `dsh` alias)
 
-1. validate the Family API with the API authority/compiler facade;
-2. validate the family implementation descriptor and trusted host inventory;
-3. inspect the generated capability projection;
-4. create an explicit project binding when required;
-5. use `where-am-i` for project-aware next-step and skill recommendations;
-6. execute contract-backed services only through a fresh Method Query and strict run method lock.
+## Managing project overrides and safe unbinding
 
-If a planner queries the registry directly, it may skip natural-language triage only. It must not
-skip the project-facts/context/proof/version-lock preflight required to construct the Method Query.
+In v1 projects, `agent-methods.yaml` lets a repository override a catalog entry with a project-local skill or disable specific entries without editing upstream plugin catalogs. When retiring an override or project-local entry, run `unbind` to remove it cleanly and verify that the remaining configuration has no schema errors or dangling references:
 
-For v2 library consumers, discovery is a candidate-to-prepared-document flow:
+```bash
+# Preview changes without modifying disk
+npx agent-method-registry unbind humanize-rewrite --project agent-methods.yaml --catalog catalog.yaml --dry-run
 
-```javascript
-const built = buildEffectiveIndex({
-  familyApi,
-  implementations,
-  inventoryEntries,
-  bindings,
-});
-
-const queried = queryEffectiveIndex({
-  index: built.index,
-  purpose: 'prepare', // use 'recommendation' for read-only discovery
-  methodQueryCandidate: {
-    mode: 'standard',
-    intent: 'review',
-    kind: 'workflow',
-    projectFactsEvidence,
-    authorization: { sideEffectBudget: 'write-review-result', granted: true },
-  },
-});
+# Apply unbind (idempotent: exits 0 with an info diagnostic if already unbound)
+npx agent-method-registry unbind humanize-rewrite --project agent-methods.yaml --catalog catalog.yaml
 ```
 
-`projectFactsEvidence` is the complete, content-bound envelope produced during project
-orientation. The Registry verifies its digest and derives `targetArtifact`,
-`contractRevisionDigest`, and `projectFactsEvidenceDigest`; consumers must not repeat those facts
-outside the envelope. Do not compute inventory snapshots, bundle digests, or Method Query digests
-in the consumer. Use `preparedInventory` and `verifyProvider(...).observed`. Recommendation exposes
-provider-state metadata without a handle. Each recommendation entry carries an `executable`
-boolean derived from the same six-state gate as prepare; consumers only need to read `executable`
-and must not recompute the six-state logic. Prepare issues the process-local
-`preparedQueryHandle` only after installation, enablement, compatibility, trust, explicit project
-binding, and authorization all pass. Missing or tampered evidence, empty inventory, stale
-snapshots, unbound providers, insufficient budgets, and bundle drift are rejected rather than
-filled with fallback evidence.
+`unbind` also supports v2 `v2-binding` files: it removes matching `serviceBindings` or family `bindings`, refuses partial service removal inside an atomic family binding (`BINDING_INVALID`), and cleans up the binding file when its final binding is removed.
 
-For v1 projects, preview conversion before any write:
+## Adopting the v2 skill-family SPI (available since 0.2.0)
+
+Installing a skill-family package adds an inventory candidate; it does not implicitly enable or bind the implementation. To adopt a v2 family in a project:
+
+1. Validate the compiled Family API and implementation descriptor (`validateCatalog`).
+2. Normalize discovered host installations and compute the capability projection (`buildEffectiveIndex` with non-empty `inventoryEntries`).
+3. Create an explicit `v2-binding` document (`validateProjectOverlay`) when enabling a family or `mixSafe` service.
+4. Run `queryEffectiveIndex` with `purpose: 'recommendation'` for read-only discovery (`executable` flag) or `purpose: 'prepare'` with a content-bound `projectFactsEvidence` envelope to obtain a process-local `preparedQueryHandle`.
+5. Pass `preparedQueryHandle` and exact `serviceIdentity` to `resolveEntry` to mint a 16-field `runMethodLock`, then re-verify the filesystem via `verifyProvider` immediately before execution.
+
+For v1-to-v2 migration, always generate and inspect a dry-run plan before applying:
 
 ```bash
 npx agent-method-registry migrate \
@@ -97,61 +73,30 @@ npx agent-method-registry migrate \
   --transaction-root .
 ```
 
-Review unresolved mappings, collisions, provider selectors, conformance evidence, and source
-digests. Apply requires the unchanged plan; rollback requires the explicit, untampered snapshot
-and byte-identical apply outputs. If a target changed after apply, rollback fails before changing
-any file.
+Rollback requires an untampered snapshot and byte-identical target files; any post-apply manual edit aborts rollback before touching disk.
 
-## Programmatic Usage
+## Professional diagnosis and proof reading
 
-```javascript
-import { validateCatalog, buildEffectiveIndex, queryEffectiveIndex } from 'agent-method-registry';
+```bash
+npx agent-method-registry diagnose --mode professional-scan \
+  --input-root . --input diagnose-request.json --subject my-registry \
+  --conclusion-output /absolute/path/conclusion.json
 
-// Validate a catalog
-const result = validateCatalog(catalogData);
-if (!result.ok) {
-  console.error(result.diagnostics);
-}
-
-// Build effective index
-const index = buildEffectiveIndex({ catalogs: [catalogData] });
-if (index.ok) {
-  // Query
-  const query = queryEffectiveIndex({ index: index.index, domain: 'artifact' });
-}
+npx agent-method-registry diagnose --mode read-proof \
+  --proof-root . --proof conclusion.json
 ```
 
-The package root intentionally remains limited to seven runtime functions plus `ERROR_CODES`.
-Schemas and CLI migration surfaces do not add hidden root functions.
+`professional-scan` evaluates only the explicit `DiagnoseInput` JSON file and creates `--conclusion-output` exclusively (never overwriting existing proofs). `read-proof` validates and interprets the saved conclusion without re-scanning.
 
-The v2 document discriminators are mandatory: `v2-implementation`, `v2-inventory`, `v2-binding`,
-`v2-projection`, `v2-run-lock`, and `v2-migration-plan`. Each generated projection and run lock can
-be round-tripped through `validateProjectOverlay` or `validateCatalog`. Family-level and
-service-level mixed bindings must carry deterministic conformance evidence; mixed services also
-require an interop TCK digest declared by every selected implementation. Binding scope and
-side-effect budget are enforced again during strict resolve.
-
-`apiRecognition` is a namespace classification (`STANDARD`, `THIRD_PARTY`, or `PROJECT`), not an
-authority signature. Supply only Family APIs already validated by their authority compiler.
-Project-owned implementations must declare `projectAuthority`; the same value is fixed through
-inventory, binding, projection, run lock, and re-verification. A later authority/source attestation
-protocol may prove who is entitled to publish a third-party or project namespace without changing
-these provider identities.
-
-Use matching API and service namespaces:
+## Subpath exports
 
 ```text
-artifact.<family>-family              → artifact.<family>.<service>
-<reverse-domain>.<family>-family      → <reverse-domain>.<family>.<service>
-project.<authority>.<family>-family   → project.<authority>.<family>.<service>
-```
-
-Existing v2 service IDs that retain `-family` before the service segment continue to work, but new
-documents should use the suffix-free service namespace.
-
-Public schemas are exported as package subpaths, for example:
-
-```text
+agent-method-registry/schemas/catalog.schema.json
+agent-method-registry/schemas/project.schema.json
 agent-method-registry/schemas/implementation.schema.json
+agent-method-registry/schemas/inventory.schema.json
+agent-method-registry/schemas/binding.schema.json
 agent-method-registry/schemas/projection.schema.json
+agent-method-registry/schemas/run-lock.schema.json
+agent-method-registry/protocol/canonical-json-v1
 ```

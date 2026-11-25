@@ -1,6 +1,6 @@
 {
   "title": "Run Method Lock",
-  "description": "JSON Schema for a v2 run method lock in agent-method-registry",
+  "description": "agent-method-registry v2 运行方法锁 Schema：严格解析通过后签发的 16 字段内容锁，供真正执行技能前核对宿主身份与磁盘目录树摘要。",
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "additionalProperties": false,
@@ -28,107 +28,128 @@
   ],
   "properties": {
     "documentKind": {
-      "const": "v2-run-lock"
+      "const": "v2-run-lock",
+      "description": "v2 运行方法锁文档判别字，固定为 v2-run-lock。"
     },
     "schemaVersion": {
-      "const": 2
+      "const": 2,
+      "description": "协议版本号，v2 运行方法锁固定为 2。"
     },
     "serviceId": {
       "type": "string",
       "pattern": "^[a-z][a-z0-9-]*(?:\\.[a-z][a-z0-9-]*){2,}$",
-      "description": "Service identity (e.g., artifact.e2e-test.author)"
+      "description": "锁定的目标服务标识（如 artifact.user-story.author）。"
     },
     "apiId": {
       "type": "string",
-      "pattern": "^(?:artifact\\.[a-z][a-z0-9-]*-family|project\\.[a-z][a-z0-9-]*\\.[a-z][a-z0-9-]*-family|(?!(?:artifact|project)\\.)(?:[a-z][a-z0-9-]*\\.){2,}[a-z][a-z0-9-]*-family)$"
+      "pattern": "^(?:artifact\\.[a-z][a-z0-9-]*-family|project\\.[a-z][a-z0-9-]*\\.[a-z][a-z0-9-]*-family|(?!(?:artifact|project)\\.)(?:[a-z][a-z0-9-]*\\.){2,}[a-z][a-z0-9-]*-family)$",
+      "description": "所属 Family API 契约标识。"
     },
     "apiMajor": {
       "type": "integer",
-      "minimum": 1
+      "minimum": 1,
+      "description": "所属 Family API 主版本号。"
     },
     "apiRevisionDigest": {
       "type": "string",
-      "pattern": "^sha256:[a-f0-9]{64}$"
+      "pattern": "^sha256:[a-f0-9]{64}$",
+      "description": "所属 Family API 的非零 SHA-256 修订摘要。"
     },
     "familyImplementationId": {
       "type": "string",
-      "minLength": 1
+      "minLength": 1,
+      "description": "锁定的技能族实现标识。"
     },
     "serviceImplementationId": {
       "type": "string",
-      "minLength": 1
+      "minLength": 1,
+      "description": "锁定的具体服务实现标识。"
     },
     "implementationVersion": {
       "type": "string",
-      "minLength": 1
+      "minLength": 1,
+      "description": "锁定的实现版本号。"
     },
     "provider": {
       "type": "object",
       "additionalProperties": false,
+      "description": "锁定的物理提供方实例信息，复验时逐字段比对可信安装清单与调用方宿主。",
       "required": ["scope", "pluginId", "host", "canonicalRoot", "skillPath", "packageDigest", "provenance"],
       "properties": {
-        "scope": { "type": "string", "enum": ["plugin", "project"] },
-        "pluginId": { "type": "string", "minLength": 1 },
-        "projectAuthority": { "type": "string", "pattern": "^project\\.[a-z][a-z0-9-]*$" },
-        "host": { "type": "string" },
-        "canonicalRoot": { "type": "string", "minLength": 1 },
-        "skillPath": { "type": "string", "minLength": 1 },
-        "packageDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
-        "provenance": { "type": "string", "minLength": 1 }
+        "scope": { "type": "string", "enum": ["plugin", "project"], "description": "提供方作用域（plugin 或 project）。" },
+        "pluginId": { "type": "string", "minLength": 1, "description": "插件或方法包标识。" },
+        "projectAuthority": { "type": "string", "pattern": "^project\\.[a-z][a-z0-9-]*$", "description": "项目本地实现的显式归属标识。" },
+        "host": { "type": "string", "description": "签发运行锁时的目标宿主标识，跨宿主调用复验将被 HOST_MISMATCH 拦截。" },
+        "canonicalRoot": { "type": "string", "minLength": 1, "description": "提供方安装的绝对物理根路径。" },
+        "skillPath": { "type": "string", "minLength": 1, "description": "目标技能相对于根路径的子目录路径。" },
+        "packageDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$", "description": "安装包 SHA-256 摘要。" },
+        "provenance": { "type": "string", "minLength": 1, "description": "安装来源标识。" }
       }
     },
     "bundleRoots": {
       "type": "array",
       "minItems": 1,
       "uniqueItems": true,
-      "items": { "type": "string", "minLength": 1 }
+      "items": { "type": "string", "minLength": 1 },
+      "description": "执行前重算文件树摘要时扫描的相对根目录列表。"
     },
     "bundleDigest": {
       "type": "string",
-      "pattern": "^sha256:[a-f0-9]{64}$"
+      "pattern": "^sha256:[a-f0-9]{64}$",
+      "description": "签发锁时的技能文件树 SHA-256 摘要，复验时若与磁盘重算值不一致即报 BUNDLE_DIGEST_MISMATCH。"
     },
     "artifactContractRevisionDigest": {
       "type": "string",
-      "pattern": "^sha256:[a-f0-9]{64}$"
+      "pattern": "^sha256:[a-f0-9]{64}$",
+      "description": "当前项目制品契约修订版的 SHA-256 摘要。"
     },
     "sourceDigest": {
       "type": "string",
-      "pattern": "^sha256:[a-f0-9]{64}$"
+      "pattern": "^sha256:[a-f0-9]{64}$",
+      "description": "聚合 API、实现描述符与安装清单输入计算出的上游源摘要。"
     },
     "bindingDigest": {
       "type": "string",
-      "pattern": "^sha256:[a-f0-9]{64}$"
+      "pattern": "^sha256:[a-f0-9]{64}$",
+      "description": "生效项目绑定配置的 SHA-256 摘要。"
     },
     "indexDigest": {
       "type": "string",
-      "pattern": "^sha256:[a-f0-9]{64}$"
+      "pattern": "^sha256:[a-f0-9]{64}$",
+      "description": "生成该锁时所依据的 v2 能力投影快照摘要。"
     },
     "queryDigest": {
       "type": "string",
-      "pattern": "^sha256:[a-f0-9]{64}$"
+      "pattern": "^sha256:[a-f0-9]{64}$",
+      "description": "授权本次解析的 Method Query 摘要。"
     },
     "projectFactsEvidenceDigest": {
       "type": "string",
-      "pattern": "^sha256:[a-f0-9]{64}$"
+      "pattern": "^sha256:[a-f0-9]{64}$",
+      "description": "项目定位阶段产出的项目事实证据信封摘要。"
     },
     "conformanceAttestationDigest": {
       "type": "string",
-      "pattern": "^sha256:[a-f0-9]{64}$"
+      "pattern": "^sha256:[a-f0-9]{64}$",
+      "description": "候选实现的确定性符合性证明摘要。"
     },
     "sideEffectSummary": {
       "type": "object",
       "additionalProperties": false,
+      "description": "本次执行的副作用上限、授权预算与放行结论汇总。",
       "required": ["ceiling", "budget", "authorized"],
       "properties": {
         "ceiling": {
           "type": "string",
-          "enum": ["none", "read-only", "write-authorized-artifacts", "write-review-result", "write-project-artifacts"]
+          "enum": ["none", "read-only", "write-authorized-artifacts", "write-review-result", "write-project-artifacts"],
+          "description": "目标服务声明的副作用上限。"
         },
         "budget": {
           "type": "string",
-          "enum": ["none", "read-only", "write-authorized-artifacts", "write-review-result", "write-project-artifacts"]
+          "enum": ["none", "read-only", "write-authorized-artifacts", "write-review-result", "write-project-artifacts"],
+          "description": "本次调用方授予的副作用预算。"
         },
-        "authorized": { "type": "boolean" }
+        "authorized": { "type": "boolean", "description": "本次调用是否已完成显式副作用授权。" }
       }
     }
   }

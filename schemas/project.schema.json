@@ -1,16 +1,17 @@
 {
   "title": "Project Overlay",
-  "description": "JSON Schema for a project overlay in the agent-method-registry protocol",
+  "description": "agent-method-registry v1 项目覆盖配置（如 agent-methods.yaml）Schema：用于在不分叉上游目录的前提下新增项目本地方法、覆盖既有入口或显式停用指定方法。",
   "type": "object",
   "additionalProperties": false,
   "required": ["schemaVersion"],
   "properties": {
     "schemaVersion": {
       "const": 1,
-      "description": "Must be exactly 1 for the current protocol version"
+      "description": "v1 项目覆盖配置版本号，固定为 1。"
     },
     "entries": {
       "type": "array",
+      "description": "当前项目新增的自有方法条目列表，其 ref 不得与上游目录已有 ref 重名（替换上游入口请使用 overrides）。",
       "items": {
         "$ref": "#/$defs/projectEntry"
       }
@@ -18,11 +19,12 @@
     "overrides": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Map of existing entry ref to override provider",
+      "description": "按上游方法 ref 建立的项目级提供方覆盖映射；可通过 `agent-method-registry unbind <ref>` 安全解除。",
       "patternProperties": {
         "^.+$": {
           "type": "object",
           "additionalProperties": false,
+          "description": "针对单个上游逻辑方法 ref 的项目本地提供方替换声明。",
           "required": ["provider"],
           "properties": {
             "provider": {
@@ -39,51 +41,59 @@
         "minLength": 1
       },
       "uniqueItems": true,
-      "description": "List of entry refs to disable"
+      "description": "在当前项目中显式停用的方法 ref 列表；解析已停用条目将直接报 ENTRY_DISABLED 而不会静默回退。"
     }
   },
   "$defs": {
     "projectProvider": {
       "type": "object",
       "additionalProperties": false,
+      "description": "项目作用域的方法提供方定位信息，指向项目根目录内的本地技能目录或显式软链接。",
       "required": ["scope", "skill"],
       "properties": {
         "scope": {
-          "const": "project"
+          "const": "project",
+          "description": "提供方作用域，项目本地条目与覆盖项固定为 project（不得附带 plugin 字段）。"
         },
         "skill": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "description": "相对于项目根目录的技能目录路径，其下须包含 SKILL.md。"
         }
       }
     },
     "match": {
       "type": "object",
       "additionalProperties": false,
+      "description": "项目自有方法的检索匹配维度（领域、制品类型、意图）。",
       "required": ["domains", "artifactTypes", "intents"],
       "properties": {
         "domains": {
           "type": "array",
           "items": { "type": "string", "minLength": 1 },
           "minItems": 1,
-          "uniqueItems": true
+          "uniqueItems": true,
+          "description": "适用的业务或语言领域列表。"
         },
         "artifactTypes": {
           "type": "array",
           "items": { "type": "string", "minLength": 1 },
           "minItems": 1,
-          "uniqueItems": true
+          "uniqueItems": true,
+          "description": "适用的目标制品类型列表。"
         },
         "intents": {
           "type": "array",
           "items": { "type": "string", "minLength": 1 },
           "minItems": 1,
-          "uniqueItems": true
+          "uniqueItems": true,
+          "description": "支持的任务意图列表。"
         }
       }
     },
     "sideEffects": {
       "type": "array",
+      "description": "项目自有方法的副作用范围声明。",
       "items": {
         "type": "string",
         "enum": ["read-only", "write-project-artifacts", "external-state-change"]
@@ -94,23 +104,27 @@
     "projectEntry": {
       "type": "object",
       "additionalProperties": false,
+      "description": "项目新增的本地方法完整定义。",
       "required": ["ref", "provider", "kind", "summary", "match", "accepts", "produces", "sideEffects"],
       "properties": {
         "ref": {
           "type": "string",
           "minLength": 1,
-          "maxLength": 128
+          "maxLength": 128,
+          "description": "项目本地方法的逻辑引用 ID，不可与已加载插件目录中的 ref 冲突。"
         },
         "provider": {
           "$ref": "#/$defs/projectProvider"
         },
         "kind": {
           "type": "string",
-          "enum": ["workflow", "operation"]
+          "enum": ["workflow", "operation"],
+          "description": "方法形态：workflow（多步流程）或 operation（单步操作）。"
         },
         "summary": {
           "type": "string",
-          "maxLength": 160
+          "maxLength": 160,
+          "description": "项目本地方法的一句话职责说明（最长 160 个字符）。"
         },
         "match": {
           "$ref": "#/$defs/match"
@@ -119,13 +133,15 @@
           "type": "array",
           "items": { "type": "string", "minLength": 1 },
           "minItems": 1,
-          "uniqueItems": true
+          "uniqueItems": true,
+          "description": "所需输入材料标识列表。"
         },
         "produces": {
           "type": "array",
           "items": { "type": "string", "minLength": 1 },
           "minItems": 1,
-          "uniqueItems": true
+          "uniqueItems": true,
+          "description": "预期产出物标识列表。"
         },
         "sideEffects": {
           "$ref": "#/$defs/sideEffects"

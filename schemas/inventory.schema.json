@@ -1,6 +1,6 @@
 {
   "title": "Trusted Host Inventory",
-  "description": "JSON Schema for a v2 trusted host inventory in agent-method-registry",
+  "description": "agent-method-registry v2 可信宿主安装清单 Schema：记录当前宿主环境中已发现且绑定包摘要的插件或项目本地方法包实例。",
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "additionalProperties": false,
@@ -8,76 +8,82 @@
   "properties": {
     "documentKind": {
       "const": "v2-inventory",
-      "description": "Discriminator for v2 inventory documents"
+      "description": "v2 安装清单文档判别字，固定为 v2-inventory。"
     },
     "schemaVersion": {
-      "const": 2
+      "const": 2,
+      "description": "协议版本号，v2 安装清单固定为 2。"
     },
     "snapshotDigest": {
       "type": "string",
-      "pattern": "^sha256:[a-f0-9]{64}$"
+      "pattern": "^sha256:[a-f0-9]{64}$",
+      "description": "按规范化排序后的 entries 数组计算出的 SHA-256 快照摘要，用于拦截清单篡改。"
     },
     "snapshotFreshness": {
       "type": "string",
-      "enum": ["fresh", "stale", "missing"]
+      "enum": ["fresh", "stale", "missing"],
+      "description": "清单快照的新鲜度状态；仅 fresh 状态可通过执行前信任核验。"
     },
     "entries": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/inventoryEntry"
       },
-      "minItems": 1
+      "minItems": 1,
+      "description": "已安装的提供方实例列表，至少包含一条记录。"
     }
   },
   "$defs": {
     "inventoryEntry": {
       "type": "object",
       "additionalProperties": false,
+      "description": "单条已安装插件或项目本地提供方实例的身份、物理根路径、宿主归属与包摘要。",
       "required": ["pluginId", "canonicalRoot", "version", "packageDigest", "provenance", "host"],
       "properties": {
         "pluginId": {
           "type": "string",
           "minLength": 1,
-          "description": "Stable plugin identifier"
+          "description": "稳定的插件或方法包标识符，须与实现描述符中的 pluginId 完全一致。"
         },
         "projectAuthority": {
           "type": "string",
-          "pattern": "^project\\.[a-z][a-z0-9-]*$"
+          "pattern": "^project\\.[a-z][a-z0-9-]*$",
+          "description": "项目本地实现（project-local）的显式归属命名空间，如 project.acme；公开或独立插件不得声明此字段。"
         },
         "canonicalRoot": {
           "type": "string",
           "minLength": 1,
-          "description": "Canonical root path of the plugin installation"
+          "description": "提供方安装目录的绝对物理路径，解析器会在此根路径下校验 SKILL.md 与软链接边界。"
         },
         "version": {
           "type": "string",
           "minLength": 1,
-          "description": "Installed version"
+          "description": "当前已安装实例的语义化版本号。"
         },
         "packageDigest": {
           "type": "string",
           "pattern": "^sha256:[a-f0-9]{64}$",
-          "description": "SHA-256 digest of the package tarball"
+          "description": "安装包归档或发布快照的 SHA-256 摘要，用于检测同路径下的包内容冲突。"
         },
         "provenance": {
           "type": "string",
           "minLength": 1,
-          "description": "Source of the installation (e.g., npm, local)"
+          "description": "安装来源标识（例如 npm、github-release、local-workspace）。"
         },
         "host": {
           "type": "string",
           "minLength": 1,
-          "description": "Host identifier (e.g., claude-code, codex)"
+          "description": "所属宿主环境标识，受支持的主力宿主包括 codex、claude-code（兼容 claude）、antigravity（兼容 antigravity-ide、agy）、kimi（兼容 kimi-code）、qoder、codebuddy、workbuddy、grok。"
         },
         "snapshotDigest": {
           "type": "string",
           "pattern": "^sha256:[a-f0-9]{64}$",
-          "description": "Digest of the inventory snapshot"
+          "description": "可选的单条目快照摘要，记录采集该安装实例时的快照指纹。"
         },
         "snapshotFreshness": {
           "type": "string",
           "enum": ["fresh", "stale", "missing"],
-          "description": "Freshness of the inventory snapshot"
+          "description": "可选的单条目快照新鲜度标记。"
         }
       }
     }

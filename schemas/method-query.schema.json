@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://artifact-chain.dev/schemas/method-query.schema.json",
   "title": "Method Query",
-  "description": "Structured standard-service query emitted after project-facts orientation and consumed by registry/planners",
+  "description": "在完成项目事实定位后由 Registry 规范化派生并签名的标准服务查询契约，用于驱动只读推荐或已授权的执行准备。",
   "type": "object",
   "required": [
     "schemaVersion",
@@ -19,91 +19,114 @@
   ],
   "additionalProperties": false,
   "properties": {
-    "schemaVersion": { "type": "integer", "const": 1 },
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1,
+      "description": "Method Query 协议版本号，固定为 1。"
+    },
     "mode": {
       "type": "string",
       "const": "standard",
-      "description": "Legacy/generic routes use a different protocol and cannot be mixed into a standard query"
+      "description": "查询模式，固定为 standard；旧版通用路径走独立协议，不可混入标准查询。"
     },
     "candidateServices": {
       "type": "array",
       "minItems": 1,
+      "description": "满足本次意图与形态的候选标准服务身份集合。",
       "items": {
         "type": "object",
+        "description": "单条候选服务的四元组身份声明。",
         "required": ["serviceId", "apiId", "apiMajor", "apiRevisionDigest"],
         "additionalProperties": false,
         "properties": {
           "serviceId": {
             "type": "string",
-            "pattern": "^(?:artifact\\.[a-z][a-z0-9-]*\\.[a-z][a-z0-9-]*|project\\.[a-z][a-z0-9-]*\\.[a-z][a-z0-9-]*\\.[a-z][a-z0-9-]*|(?!(?:artifact|project)\\.)(?:[a-z][a-z0-9-]*\\.){3,}[a-z][a-z0-9-]*)$"
+            "pattern": "^(?:artifact\\.[a-z][a-z0-9-]*\\.[a-z][a-z0-9-]*|project\\.[a-z][a-z0-9-]*\\.[a-z][a-z0-9-]*\\.[a-z][a-z0-9-]*|(?!(?:artifact|project)\\.)(?:[a-z][a-z0-9-]*\\.){3,}[a-z][a-z0-9-]*)$",
+            "description": "候选服务的完整规范标识。"
           },
           "apiId": {
             "type": "string",
-            "pattern": "^(?:artifact\\.[a-z][a-z0-9-]*-family|project\\.[a-z][a-z0-9-]*\\.[a-z][a-z0-9-]*-family|(?!(?:artifact|project)\\.)(?:[a-z][a-z0-9-]*\\.){2,}[a-z][a-z0-9-]*-family)$"
+            "pattern": "^(?:artifact\\.[a-z][a-z0-9-]*-family|project\\.[a-z][a-z0-9-]*\\.[a-z][a-z0-9-]*-family|(?!(?:artifact|project)\\.)(?:[a-z][a-z0-9-]*\\.){2,}[a-z][a-z0-9-]*-family)$",
+            "description": "候选服务所属的 Family API 标识。"
           },
-          "apiMajor": { "type": "integer", "minimum": 1 },
+          "apiMajor": { "type": "integer", "minimum": 1, "description": "所属 Family API 主版本号。" },
           "apiRevisionDigest": {
             "type": "string",
-            "pattern": "^sha256:[a-f0-9]{64}$"
+            "pattern": "^sha256:[a-f0-9]{64}$",
+            "description": "所属 Family API 修订版 SHA-256 摘要。"
           }
         }
       }
     },
     "intent": {
       "type": "string",
-      "enum": ["default", "help", "author", "review", "repair", "route", "audit", "generate", "batch"]
+      "enum": ["default", "help", "author", "review", "repair", "route", "audit", "generate", "batch"],
+      "description": "本次查询请求的任务意图枚举。"
     },
-    "kind": { "type": "string", "enum": ["workflow", "operation"] },
+    "kind": {
+      "type": "string",
+      "enum": ["workflow", "operation"],
+      "description": "请求的方法形态（workflow 或 operation）。"
+    },
     "targetArtifact": {
       "type": "object",
+      "description": "从项目事实证据信封派生出的目标制品类型与实例 ID。",
       "required": ["type", "id"],
       "additionalProperties": false,
       "properties": {
-        "type": { "type": "string", "minLength": 1 },
-        "id": { "type": "string", "minLength": 1 }
+        "type": { "type": "string", "minLength": 1, "description": "目标制品类型（如 spec、design、user-story）。" },
+        "id": { "type": "string", "minLength": 1, "description": "目标制品唯一标识。" }
       }
     },
     "contractRevisionDigest": {
       "type": "string",
-      "pattern": "^sha256:[a-f0-9]{64}$"
+      "pattern": "^sha256:[a-f0-9]{64}$",
+      "description": "项目当前制品契约修订版的 SHA-256 摘要。"
     },
     "projectFactsEvidenceDigest": {
       "type": "string",
-      "pattern": "^sha256:[a-f0-9]{64}$"
+      "pattern": "^sha256:[a-f0-9]{64}$",
+      "description": "经校验的项目事实证据信封内容摘要。"
     },
     "authorization": {
       "type": "object",
+      "description": "调用方声明的副作用预算与授权状态。",
       "required": ["sideEffectBudget", "granted"],
       "additionalProperties": false,
       "properties": {
         "sideEffectBudget": {
           "type": "string",
-          "enum": ["none", "read-only", "write-authorized-artifacts", "write-review-result", "write-project-artifacts"]
+          "enum": ["none", "read-only", "write-authorized-artifacts", "write-review-result", "write-project-artifacts"],
+          "description": "本次查询允许的最高副作用等级。"
         },
         "granted": {
           "type": "boolean",
-          "description": "Recommendation may be emitted with false; execution must separately enforce authorization"
+          "description": "只读推荐查询可为 false；进入 prepare 与严格解析执行写入型服务时必须显式授权为 true。"
         }
       }
     },
     "registrySnapshot": {
       "type": "object",
+      "description": "查询生成时绑定的 v2 能力投影快照摘要与新鲜度。",
       "required": ["digest", "freshness"],
       "additionalProperties": false,
       "properties": {
         "digest": {
           "type": "string",
-          "pattern": "^sha256:[a-f0-9]{64}$"
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "description": "能力投影的 snapshotDigest。"
         },
         "freshness": {
           "type": "string",
-          "enum": ["fresh", "stale", "missing"]
+          "enum": ["fresh", "stale", "missing"],
+          "description": "投影快照新鲜度；仅 fresh 快照可签发执行句柄。"
         }
       }
     },
     "queryDigest": {
       "type": "string",
-      "pattern": "^sha256:[a-f0-9]{64}$"
+      "pattern": "^sha256:[a-f0-9]{64}$",
+      "description": "对其余全部查询字段按协议规范序列化计算出的 SHA-256 摘要。"
     }
   }
 }

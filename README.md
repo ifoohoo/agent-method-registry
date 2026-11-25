@@ -2,80 +2,43 @@
 
 [中文](README.zh-CN.md)
 
-Deterministic registry for agent method catalog resolution, provider verification, and CLI
-diagnostics.
+`agent-method-registry` is a deterministic local registry for agent method discovery, project-level overrides, multi-host provider verification, safe capability unbinding, and health diagnostics. Instead of hardcoding plugin paths inside scripts or prompts, callers resolve stable logical method IDs while enforcing schema contracts, host identity, and filesystem integrity.
 
-`agent-method-registry` helps agentic coding projects maintain a canonical catalog of methods
-(skills/workflows), resolve providers with filesystem verification, and diagnose registry health.
-It is designed for deterministic local use with CLI tools, Node libraries, and CI pipelines.
+## Protocol overview
 
-The v2 protocol (available since 0.2.0) also provides the runtime side of a skill-family SPI: it validates
-implementation descriptors, verifies installed bundles against trusted inventory, projects
-capabilities, applies explicit project bindings, performs strict Method Query resolution, and
-produces a content-bound run method lock.
+The package supports both protocol generations behind an invariant **7-function + `ERROR_CODES`** root API:
 
-## Family API and SPI model
+- **v1 catalog & project overlay**: lightweight cross-plugin method registration (`catalog.yaml` / `catalog.json`), project-local additions, overrides, and tombstones (`agent-methods.yaml`), multi-dimensional filtering, `SKILL.md` realpath verification, and idempotent capability unbinding (`unbind`).
+- **v2 skill-family SPI & run-lock (available since `0.2.0`)**: contract-backed family runtime chain connecting Family APIs, implementation descriptors (`v2-implementation`), trusted host inventories (`v2-inventory`), capability projections (`v2-projection`), explicit project bindings (`v2-binding`), content-bound `Method Query` envelopes, and 16-field `RunMethodLock` re-verification (`v2-run-lock`).
 
-The Java analogy is intentionally limited:
+## Core guarantees
 
-- a Family API is similar to a Java interface or API contract;
-- a family implementation descriptor is similar to an `implements` declaration;
-- trusted inventory, project binding, and registry resolution together play a role similar to a
-  constrained SPI/`ServiceLoader`;
-- this package is not JVM bytecode verification and does not use a Java classloader.
+1. **Orthogonal six-state model (fail-closed)**: installation (`INSTALLED`), enablement (`ENABLED`), API compatibility (`COMPATIBLE`), filesystem trust (`VERIFIED`), unique resolution (`EXPLICIT_BINDING`), and `project-binding` selection source are tracked independently. Zero or multiple eligible candidates always fail closed — the registry never falls back to the first entry, highest version, or an undeclared default.
+2. **Single `executable` discriminant**: every v2 recommendation entry carries an `executable` boolean computed by the exact same six-state gate used during `prepare`. Entry routers such as `where-am-i` read `executable` directly without recomputing state combinations. `UNIQUE_COMPATIBLE` entries remain visible in recommendations with `executable: false`.
+3. **Unified multi-host isolation & pre-execution re-verification**: natively supports `codex`, `claude-code` (compatible with `claude` alias), `antigravity` (compatible with `antigravity-ide` and `agy` CLI aliases, covering `.agents/skills`, `.agent/skills`, `~/.gemini/config/skills`, and `~/.gemini/config/plugins/*/skills`), `kimi` (compatible with Foundation `kimi-code` host profiles), `qoder`, `codebuddy`, `workbuddy`, `grok`, `cursor`, and `deepseek-harness` (compatible with `dsh` alias). `RunMethodLock` binds both host identity and bundle tree SHA-256 digests; cross-host invocations or post-lock file edits fail closed with `HOST_MISMATCH` or `BUNDLE_DIGEST_MISMATCH`.
 
-`artifact-chain-help` may render known Family APIs and the registry capability projection. In a
-configured project, `where-am-i` is the user-facing trigger that combines project facts with that
-projection to recommend what to do next and which skill to use. An external planner may query the
-registry directly when it already has a structured Method Query, but it must still provide the
-project-facts/context/proof/version-lock preflight evidence required by the calling system.
+### Namespace classification
 
-Provider state is orthogonal: **installed does not mean enabled, compatible, trusted, or uniquely
-resolved**. All contract-backed services use strict resolution. Zero or multiple eligible
-candidates fail closed; the registry never selects the first entry, the highest version, or an
-undeclared builtin fallback.
-
-Recommendation entries carry an `executable` boolean derived from the same six-state gate that
-prepare uses. `executable: true` means all six orthogonal states are simultaneously satisfied
-(INSTALLED, ENABLED, COMPATIBLE, VERIFIED, EXPLICIT_BINDING, project-binding). Consumers such as
-`where-am-i` only need to read `executable`; they must not recompute the six-state logic.
-`UNIQUE_COMPATIBLE` entries appear in recommendation output but are always `executable: false`.
-
-The Cycle 4 projection path consumes a Family API that its authority has already compiled and
-validated, including its immutable revision digest. It deterministically classifies supported
-identities as `STANDARD`, `THIRD_PARTY`, or `PROJECT`; this classification is not authority
-authentication. The registry checks every implementation and binding against that identity, but
-does not mint authority or re-implement the Family API schema. Full third-party/project
-authority-source attestations are a separate protocol and are not silently inferred from a prefix.
-Project-owned implementations must carry an explicit `projectAuthority` through inventory,
-binding, projection, run lock, and preflight re-verification.
-
-The canonical identity pairs are:
+Supported Family APIs and service IDs are deterministically classified into three namespaces:
 
 ```text
-STANDARD     artifact.<family>-family
-             artifact.<family>.<service>
-
-THIRD_PARTY  <reverse-domain>.<family>-family
-             <reverse-domain>.<family>.<service>
-
-PROJECT      project.<authority>.<family>-family
-             project.<authority>.<family>.<service>
-             projectAuthority = project.<authority>
+STANDARD     artifact.<family>-family              → artifact.<family>.<service>
+THIRD_PARTY  <reverse-domain>.<family>-family      → <reverse-domain>.<family>.<service>
+PROJECT      project.<authority>.<family>-family   → project.<authority>.<family>.<service>
+             (requires consistent projectAuthority = project.<authority> end to end)
 ```
 
-For compatibility, existing v2 service IDs that retain `-family` in the service namespace remain
-valid. New documents should use the canonical suffix-free service namespace shown above.
+Legacy v2 service IDs retaining `-family` before the service segment remain valid for backward compatibility; new descriptors should use the suffix-free service namespace. Namespace classification enforces structural consistency, while external domain/authority provenance is handled by separate attestation protocols.
 
-## Install
+## Installation
+
+Requires Node.js `>=22.0.0`.
 
 ```bash
 npm install agent-method-registry
 ```
 
-Node.js `>=22.0.0` is required.
-
-## Quick Start
+## Public API (7 root functions)
 
 ```javascript
 import {
@@ -86,35 +49,30 @@ import {
   resolveEntry,
   verifyProvider,
   diagnoseRegistry,
+  ERROR_CODES,
 } from 'agent-method-registry';
 ```
 
-## Public API
+| Function | Responsibility |
+|----------|----------------|
+| `validateCatalog` | Validate a v1 plugin catalog or explicitly discriminated v2 implementation, inventory, run-lock, or migration-plan document |
+| `validateProjectOverlay` | Validate a v1 project overlay (`agent-methods.yaml`) or a v2 project binding / capability projection document |
+| `buildEffectiveIndex` | Build a deterministic v1 effective index, or normalize v2 candidate installations (`preparedInventory`) and compute capability projections |
+| `queryEffectiveIndex` | Filter a v1 index, run read-only v2 `recommendation` queries, or `prepare` an authorized v2 execution with a process-local `preparedQueryHandle` |
+| `resolveEntry` | Resolve v1 entries with host root verification, or run v2 strict resolution and mint a content-bound `runMethodLock` |
+| `verifyProvider` | Verify v1 `SKILL.md` paths or re-verify v2 inventory instances and run locks against realpaths, host identity, and bundle digests |
+| `diagnoseRegistry` | Run synchronous health checks (`schema`, `merge`, `freshness`, `provider`, `v2-*`), `professional-scan`, or `read-proof` without adding an eighth export |
 
-The package exposes exactly **7 functions** plus `ERROR_CODES` and domain types:
+JSON Schemas are exported via package subpaths such as `agent-method-registry/schemas/inventory.schema.json` without expanding the 7-function root API.
+### Professional scan and proof reading
 
-| Function | Purpose |
-|----------|---------|
-| `validateCatalog` | Validate a v1 catalog or explicitly discriminated v2 implementation/inventory/run-lock/migration-plan document |
-| `validateProjectOverlay` | Validate a v1 project overlay or a v2 project binding/projection document |
-| `buildEffectiveIndex` | Build a deterministic v1 index or v2 capability projection |
-| `queryEffectiveIndex` | Query a v1 index, recommend v2 services, or prepare an authorized v2 execution |
-| `resolveEntry` | Resolve v1 providers or perform v2 strict resolution and create a run method lock |
-| `verifyProvider` | Verify v1 paths or v2 inventory/bundle/run-lock evidence against the filesystem |
-| `diagnoseRegistry` | Diagnose schema, projection, snapshot, binding, provider, lock, and migration health. The same function also runs a professional scan or reads an existing proof; it does not add an eighth root export. |
-
-TypeScript overloads preserve the v1 result types when a v1 catalog, overlay, or index input is
-passed. Published schemas are addressable through package subpaths such as
-`agent-method-registry/schemas/implementation.schema.json` without adding runtime functions.
-
-Omit `mode` and `diagnoseRegistry` keeps the original synchronous diagnosis. Two explicit inputs
-reuse that same function:
+Omitting `mode` runs standard synchronous diagnosis. Passing `mode` produces or interprets Foundation `skill-family.professional-conclusion` proofs through the same function:
 
 ```javascript
 const scanned = diagnoseRegistry({
   mode: 'professional-scan',
   subject: { ref: 'my-registry' },
-  request: { catalogs: [catalogData] }, // existing DiagnoseInput; catalogs are not inferred
+  request: { catalogs: [catalogData] }, // explicit DiagnoseInput; directories are never guessed
 });
 
 const read = diagnoseRegistry({
@@ -124,131 +82,48 @@ const read = diagnoseRegistry({
 });
 ```
 
-`professional-scan` returns the original `ok`, `checks`, and `diagnostics` fields plus a common
-`conclusion`. The conclusion `outcome.code` is one of `REGISTRY_CLEAR`, `REGISTRY_FINDINGS`,
-`REGISTRY_CHECK_INCOMPLETE`, or `REGISTRY_CHECK_UNAVAILABLE`. `ok: true` is not a complete scan:
-unverified selected checks yield `REGISTRY_CHECK_INCOMPLETE`. Optional v2 checks enter the declared
-scope only when `request.v2` is present. `read-proof` consumes an already-parsed proof object; it
-does not read files, re-run diagnosis, or execute cataloged methods. Successful reads return
-`status: "pass" | "not_pass" | "unavailable"` with the original conclusion left unchanged.
-
-### v2 producer flow
-
-Independent families do not copy Registry digest algorithms. Two existing functions accept
-candidate facts and return complete documents normalized, validated, and signed by the Registry:
-
-```javascript
-const projection = buildEffectiveIndex({
-  familyApi,
-  implementations,
-  inventoryEntries: discoveredInstallations,
-  bindings,
-});
-
-const query = queryEffectiveIndex({
-  index: projection.index,
-  purpose: 'prepare', // use 'recommendation' for read-only discovery
-  methodQueryCandidate: {
-    mode: 'standard',
-    intent: 'author',
-    kind: 'workflow',
-    projectFactsEvidence,
-    authorization,
-  },
-});
-```
-
-`inventoryEntries` must be a non-empty array; on success, `preparedInventory` has passed the
-authoritative Inventory validator. A `methodQueryCandidate` has exactly five top-level fields;
-its complete `projectFactsEvidence` envelope is content-verified before the Registry derives the
-target artifact, contract revision, evidence digest, candidate services, fresh snapshot, and query
-digest. Recommendation results expose provider-state metadata and never contain a handle. A
-successful prepare additionally proves installation, enablement, compatibility, trust, explicit
-project binding, and authorization before the process-local `preparedQueryHandle` is issued. The
-caller then passes it with an exact `serviceIdentity` to `resolveEntry`, receives a
-`runMethodLock`, and re-verifies the filesystem with `verifyProvider` before execution.
-
-Recommendation entries expose an `executable` boolean. When `executable` is true, the entry's six
-orthogonal status fields are the unique executable combination; when false, the status fields
-report the actual provider state. The `executable` flag and the prepare gate are derived from the
-same shared function inside the Registry; callers must not recompute them.
-
-`observed` reports only safely read realpaths and the actual bundle digest; it is not a trust
-decision. Installation is not enablement either: binding, conformance, authorization, and
-provider re-verification remain fail closed.
+`professional-scan` sets `conclusion.outcome.code` to `REGISTRY_CLEAR`, `REGISTRY_FINDINGS`, `REGISTRY_CHECK_INCOMPLETE`, or `REGISTRY_CHECK_UNAVAILABLE` (`ok: true` with unverified checks yields `REGISTRY_CHECK_INCOMPLETE`). `read-proof` inspects an in-memory proof object without reading files or re-running scans, returning `status: "pass" | "not_pass" | "unavailable"`.
 
 ## CLI
 
 ```bash
-# Validate catalog files
-agent-method-registry validate --catalog catalog.yaml --project overlay.yaml
+# Read-only command overview and supported host list
+agent-method-registry --help
 
-# Build effective index
-agent-method-registry index --catalog catalog.yaml --out index.json
+# Validate catalogs and project overlays
+agent-method-registry validate --catalog catalog.yaml --project agent-methods.yaml
 
-# Query the index
-agent-method-registry query --index index.json
-agent-method-registry query --index index.json --domain artifact --kind workflow
+# Build and query an effective index
+agent-method-registry index --catalog catalog.yaml --project agent-methods.yaml --out index.json
+agent-method-registry query --index index.json --domain zh-CN --intent rewrite
 
-# v2 recommendation query: candidate is the single query source and no handle is returned
-agent-method-registry query --index projection.json --candidate candidate.json
+# Resolve a method entry for a target host (codex, claude-code, antigravity, kimi, qoder, codebuddy, workbuddy, grok, cursor, deepseek-harness/dsh)
+agent-method-registry resolve --index index.json --ref humanize-rewrite \
+  --host antigravity --plugin-root /absolute/plugin/path
 
-# Resolve a specific entry
-agent-method-registry resolve --index index.json --ref my-plugin.entity.author --host claude-code --plugin-root ./plugins/my-plugin
+# Safely unbind a project override or v2 binding (validates remaining config, cleans dangling refs, idempotent)
+agent-method-registry unbind humanize-rewrite --project agent-methods.yaml --catalog catalog.yaml
 
-# Preview a v1-to-v2 migration. Review the plan and collisions before apply.
-agent-method-registry migrate --catalog catalog.yaml --project project.yaml \
-  --migration-context migration-context.json --dry-run --out-plan migration-plan.json \
-  --transaction-root .
+# Preview v1-to-v2 migration (review mappings and collisions before --apply)
+agent-method-registry migrate --catalog catalog.yaml --project agent-methods.yaml \
+  --migration-context migration-context.json --dry-run --out-plan migration-plan.json --transaction-root .
 
-# Professional scan: --input is DiagnoseInput JSON relative to --input-root
-agent-method-registry diagnose --mode professional-scan \
-  --input-root . --input diagnose-request.json --subject my-registry
-
-# Optional exclusive proof write; the path must be absolute and must not already exist
+# Run professional scan with exclusive proof creation, then read the proof
 agent-method-registry diagnose --mode professional-scan \
   --input-root . --input diagnose-request.json --subject my-registry \
   --conclusion-output /absolute/path/conclusion.json
-
-# Read a Registry professional conclusion; the path is relative to --proof-root
-agent-method-registry diagnose --mode read-proof \
-  --proof-root . --proof conclusion.json
+agent-method-registry diagnose --mode read-proof --proof-root . --proof conclusion.json
 ```
 
-The v1 catalog/overlay/query/resolve protocol remains supported. v2 migration supports explicit
-dry-run, apply, and snapshot-backed rollback. Do not apply a generated plan until its mappings,
-bindings, source digests, and collision report have been reviewed.
-Rollback also verifies that every target is still byte-identical to the apply output. Later user
-changes cause the whole rollback to fail before any target is restored or deleted.
-
-All CLI commands output a single JSON envelope to stdout:
-
-```json
-{
-  "ok": true,
-  "data": { "..." },
-  "diagnostics": []
-}
-```
-
-Exit codes: `0` = success, `1` = data/index/entry error, `2` = malformed invocation.
-`diagnose --mode read-proof` uses the common read mapping: `pass` exits 0, `not_pass` exits 1, and
-unreadable or foreign proofs exit 2. `diagnose --mode professional-scan` exits 0 only for
-`REGISTRY_CLEAR`; findings, incomplete checks, and unavailable checks exit 1.
+Every CLI invocation writes a single-line JSON envelope `{ "ok": boolean, "data": ..., "diagnostics": [...] }` to stdout. Exit codes: `0` = success (including empty query matches and idempotent `unbind` when already unbound), `1` = validation/verification/drift failure or `not_pass` proof, `2` = CLI usage error or unreadable/foreign proof.
 
 ## Safety
 
 <!-- release-skill:capability:safe-first-command -->
-A safe first command is `agent-method-registry --help`: it is read-only and writes nothing.
-`validate`, `query`, `resolve`, and `diagnose` only read the inputs named on the command line.
-They do not execute cataloged methods. `diagnose` writes a file only when `--conclusion-output`
-is set.
+A safe first command is `agent-method-registry --help`: it is read-only, exits `0`, and writes nothing. `validate`, `query`, `resolve`, and `diagnose` (without `--conclusion-output`) only read the files explicitly named on the command line and never execute cataloged skills.
 
 <!-- release-skill:capability:external-write-boundary -->
-External-write boundary: this package is deterministic and local. It makes no network calls and
-performs no external writes. The only file writes are the ones explicitly requested: `--out`
-(index), `--out-plan` (migration plan), `--conclusion-output` (new professional conclusion, never
-a replacement), and migration `--apply` confined to `--transaction-root`.
+External-write boundary: this package is deterministic and purely local. It makes no network calls and performs no remote writes. Local disk writes happen only when explicitly requested: `index --out`, `unbind` (without `--dry-run`, updating the target project config or removing an emptied v2 binding file), `diagnose --conclusion-output` (exclusive new file creation, never overwriting), and `migrate` confined to `--transaction-root`.
 
 ## License
 

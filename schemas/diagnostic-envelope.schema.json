@@ -1,19 +1,20 @@
 {
   "title": "Diagnostic Envelope",
-  "description": "JSON Schema for the unified diagnostic envelope output format",
+  "description": "agent-method-registry CLI 统一输出信封 Schema：所有命令均在标准输出打印单行 JSON 信封，包含成功标志、结果数据与结构化诊断项。",
   "type": "object",
   "additionalProperties": false,
   "required": ["ok", "diagnostics"],
   "properties": {
     "ok": {
       "type": "boolean",
-      "description": "Whether the operation succeeded"
+      "description": "本次命令或校验是否通过（无 error 级别诊断且满足目标检查完成条件时为 true）。"
     },
     "data": {
-      "description": "Optional result data (type depends on command)"
+      "description": "命令成功或部分诊断模式下返回的业务载荷，具体结构随子命令变化。"
     },
     "diagnostics": {
       "type": "array",
+      "description": "按执行顺序收集的错误、警告或提示信息列表。",
       "items": {
         "$ref": "#/$defs/diagnostic"
       }
@@ -22,6 +23,7 @@
   "$defs": {
     "errorCode": {
       "type": "string",
+      "description": "稳定的机器可读诊断码枚举，供上游调用方按错误类别分支处理。",
       "enum": [
         "SCHEMA_VERSION_UNSUPPORTED",
         "INVALID_CATALOG",
@@ -52,21 +54,23 @@
     "source": {
       "type": "object",
       "additionalProperties": false,
+      "description": "触发该诊断的配置来源与字段位置定位。",
       "required": ["label"],
       "properties": {
         "label": {
           "type": "string",
-          "description": "Logical source label: <project>, <catalog:id>, <index>, or <external>"
+          "description": "逻辑来源标签：<project>（项目配置）、<catalog:id>（插件目录）、<index>（索引或投影）或 <external>（文件系统或命令行输入）。"
         },
         "pointer": {
           "type": "string",
-          "description": "JSON Pointer to the field (e.g., /entries/0/provider)"
+          "description": "指向问题字段的 JSON Pointer 路径（例如 /entries/0/provider）。"
         }
       }
     },
     "diagnostic": {
       "type": "object",
       "additionalProperties": false,
+      "description": "单条结构化诊断记录，交代问题代码、严重级别、原因说明与可选修复建议。",
       "required": ["code", "severity", "message"],
       "properties": {
         "code": {
@@ -74,17 +78,20 @@
         },
         "severity": {
           "type": "string",
-          "enum": ["error", "warn", "info"]
+          "enum": ["error", "warn", "info"],
+          "description": "严重级别：error 表示阻断性错误，warn 表示兼容或潜在冲突告警，info 表示无匹配或幂等状态提示。"
         },
         "message": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "description": "面向开发者与智能体的具体原因说明。"
         },
         "source": {
           "$ref": "#/$defs/source"
         },
         "suggestion": {
-          "type": "string"
+          "type": "string",
+          "description": "可直接照着执行的下一步修复指引。"
         }
       }
     }

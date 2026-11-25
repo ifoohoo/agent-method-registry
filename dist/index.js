@@ -6,7 +6,7 @@ import {
   validateCatalog,
   validateProjectOverlay,
   verifyProvider
-} from "./chunk-5DQRT5MW.js";
+} from "./chunk-B2A5J4XP.js";
 
 // src/errors/codes.ts
 var ERROR_CODES = [

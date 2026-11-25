@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.1
+
+### Added
+
+- Expanded the unified host registry across `resolve`, `verifyProvider`, `buildEffectiveIndex`, and `diagnoseRegistry` to cover `cursor`, `deepseek-harness` (`dsh`), and Google Antigravity (`antigravity`, `antigravity-ide`, `agy`) four-root discovery paths alongside existing hosts.
+- Added the `unbind` CLI subcommand (`--dry-run` supported) to cleanly remove v1 project overrides or v2 `v2-binding` entries while rejecting partial service removal inside atomic family bindings (`BINDING_INVALID`).
+- Added top-level `-h` help flag support and complete host-alias suggestions on invalid `--host` diagnostics.
+
+### Fixed
+
+- Hardened path containment and symlink boundary checks during catalog, overlay, and provider verification, and aligned `skill-family-contracts` and `skill-family-harness-node` to `0.39.0`.
+
+### Compatibility
+
+- The package root still exposes the exact seven runtime functions plus `ERROR_CODES`. Existing v1 and v2 runtime APIs, schemas, and CLI exit-code contracts retain their behavior.
+
 ## 0.3.0
 
 ### Added

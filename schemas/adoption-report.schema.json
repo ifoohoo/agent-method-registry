@@ -1,6 +1,6 @@
 {
   "title": "Adoption Report",
-  "description": "JSON Schema for machine-verifiable adoption level reports. A single report declares exactly one of three mutually exclusive outcomes: v1_compatible, v2_adopted, or failed.",
+  "description": "技能族接入等级核验报告 Schema：每份报告只能声明 v1_compatible（兼容 v1 基础目录解析）、v2_adopted（完整接入 v2 SPI 与运行锁）或 failed（未达标）三种互斥结论之一。",
   "$schema": "http://json-schema.org/draft-07/schema#",
   "oneOf": [
     { "$ref": "#/$defs/v1CompatibleReport" },
@@ -11,22 +11,24 @@
     "v1CompatibleReport": {
       "type": "object",
       "additionalProperties": false,
+      "description": "通过 v1 目录解析、七函数调用与 CLI 基础契约验证的兼容报告。",
       "required": ["qualified", "level", "packageVersion", "v1Evidence"],
       "properties": {
-        "qualified": { "const": true },
-        "level": { "const": "v1_compatible" },
-        "packageVersion": { "type": "string", "minLength": 1 },
+        "qualified": { "const": true, "description": "接入核验通过标志，固定为 true。" },
+        "level": { "const": "v1_compatible", "description": "接入等级标识：已完成 v1 协议兼容接入。" },
+        "packageVersion": { "type": "string", "minLength": 1, "description": "核验所使用的 agent-method-registry 包版本。" },
         "v1Evidence": { "$ref": "#/$defs/v1Evidence" }
       }
     },
     "v2AdoptedReport": {
       "type": "object",
       "additionalProperties": false,
+      "description": "在满足 v1 兼容基础上，进一步跑通 v2 实现描述符、非空安装清单、项目显式绑定、不透明查询句柄与运行锁复验的完整采用报告。",
       "required": ["qualified", "level", "packageVersion", "v1Evidence", "v2Evidence"],
       "properties": {
-        "qualified": { "const": true },
-        "level": { "const": "v2_adopted" },
-        "packageVersion": { "type": "string", "minLength": 1 },
+        "qualified": { "const": true, "description": "接入核验通过标志，固定为 true。" },
+        "level": { "const": "v2_adopted", "description": "接入等级标识：已完成 v2 SPI 全链路采用。" },
+        "packageVersion": { "type": "string", "minLength": 1, "description": "核验所使用的 agent-method-registry 包版本。" },
         "v1Evidence": { "$ref": "#/$defs/v1Evidence" },
         "v2Evidence": { "$ref": "#/$defs/v2Evidence" }
       }
@@ -34,13 +36,15 @@
     "failedReport": {
       "type": "object",
       "additionalProperties": false,
+      "description": "接入核验未通过时的失败报告，必须附带至少一条可定位的诊断记录。",
       "required": ["qualified", "packageVersion", "diagnostics"],
       "properties": {
-        "qualified": { "const": false },
-        "packageVersion": { "type": "string", "minLength": 1 },
+        "qualified": { "const": false, "description": "接入核验未通过标志，固定为 false。" },
+        "packageVersion": { "type": "string", "minLength": 1, "description": "核验所使用的 agent-method-registry 包版本。" },
         "diagnostics": {
           "type": "array",
           "minItems": 1,
+          "description": "导致接入核验失败的具体缺口列表。",
           "items": { "$ref": "#/$defs/locatableDiagnostic" }
         }
       }
@@ -48,17 +52,19 @@
     "v1Evidence": {
       "type": "object",
       "additionalProperties": false,
+      "description": "证明 v1 兼容成立的四项必选事实证据。",
       "required": ["packageInstalled", "sevenFunctionsReturn", "cliQueryResolve", "typescriptCompatible"],
       "properties": {
-        "packageInstalled": { "const": true },
-        "sevenFunctionsReturn": { "const": true },
-        "cliQueryResolve": { "const": true },
-        "typescriptCompatible": { "const": true }
+        "packageInstalled": { "const": true, "description": "已从真实安装包解析并加载依赖。" },
+        "sevenFunctionsReturn": { "const": true, "description": "包根导出的 7 个公共函数返回预期结构。" },
+        "cliQueryResolve": { "const": true, "description": "CLI 的 query 与 resolve 子命令实测通过。" },
+        "typescriptCompatible": { "const": true, "description": "公开 TypeScript 类型声明在严格模式下编译通过。" }
       }
     },
     "v2Evidence": {
       "type": "object",
       "additionalProperties": false,
+      "description": "证明 v2 SPI 运行时链路闭环的十项必选事实证据。",
       "required": [
         "formalDescriptor",
         "nonEmptyInventory",
@@ -72,25 +78,26 @@
         "selectionSource"
       ],
       "properties": {
-        "formalDescriptor": { "const": true },
-        "nonEmptyInventory": { "const": true },
-        "explicitProjectBinding": { "const": true },
-        "contentBoundProjectFactsEvidence": { "const": true },
-        "prepareOpaqueHandle": { "const": true },
-        "strictResolve": { "const": true },
-        "runMethodLock": { "const": true },
-        "preExecutionReverify": { "const": true },
-        "resolution": { "const": "EXPLICIT_BINDING" },
-        "selectionSource": { "const": "project-binding" }
+        "formalDescriptor": { "const": true, "description": "具备通过 Schema 校验的正式 v2 实现描述符。" },
+        "nonEmptyInventory": { "const": true, "description": "基于非空可信宿主安装清单构建投影。" },
+        "explicitProjectBinding": { "const": true, "description": "具备显式项目绑定配置。" },
+        "contentBoundProjectFactsEvidence": { "const": true, "description": "传入绑定内容摘要的项目事实证据信封。" },
+        "prepareOpaqueHandle": { "const": true, "description": "通过 prepare 查询取得进程内不透明句柄。" },
+        "strictResolve": { "const": true, "description": "完成严格解析且未走隐式兜底。" },
+        "runMethodLock": { "const": true, "description": "生成 16 字段内容绑定的运行方法锁。" },
+        "preExecutionReverify": { "const": true, "description": "执行前通过文件系统运行锁复验。" },
+        "resolution": { "const": "EXPLICIT_BINDING", "description": "解析状态必须为 EXPLICIT_BINDING。" },
+        "selectionSource": { "const": "project-binding", "description": "候选选择来源必须为 project-binding。" }
       }
     },
     "locatableDiagnostic": {
       "type": "object",
       "additionalProperties": false,
+      "description": "带明确错误码与原因说明的失败诊断项。",
       "required": ["code", "message"],
       "properties": {
-        "code": { "type": "string", "minLength": 1 },
-        "message": { "type": "string", "minLength": 1 }
+        "code": { "type": "string", "minLength": 1, "description": "失败诊断码。" },
+        "message": { "type": "string", "minLength": 1, "description": "缺失条件与修复方向说明。" }
       }
     }
   }

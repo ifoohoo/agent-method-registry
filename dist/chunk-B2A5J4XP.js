@@ -144,20 +144,63 @@ function getValidator(schemaName) {
   schemaCache.set(schemaName, validator);
   return validator;
 }
+function formatAjvError(err, schemaName) {
+  const path = err.instancePath || "/";
+  const base = `${path} ${err.message || "validation failed"}`;
+  const params = err.params ?? {};
+  if (err.keyword === "const" && "allowedValue" in params) {
+    const expected = JSON.stringify(params.allowedValue);
+    if (schemaName === "project" && path.endsWith("/scope") && params.allowedValue === "project") {
+      return {
+        message: `${base}: expected ${expected}\uFF08\u9879\u76EE\u8986\u76D6\u914D\u7F6E\u4EC5\u652F\u6301\u672C\u5730\u4F5C\u7528\u57DF\uFF0C\u8BF7\u5C06 scope \u8BBE\u4E3A "project" \u5E76\u79FB\u9664 plugin \u5B57\u6BB5\uFF09`,
+        suggestion: `\u5C06 ${path} \u8BBE\u4E3A "project"\uFF0C\u5E76\u5728 provider \u4E0B\u4EC5\u4FDD\u7559 scope \u4E0E\u672C\u5730\u76F8\u5BF9\u8DEF\u5F84 skill`
+      };
+    }
+    return {
+      message: `${base}: expected ${expected}\uFF08\u8BF7\u5C06\u8BE5\u5B57\u6BB5\u503C\u4FEE\u6B63\u4E3A\u5E38\u91CF ${expected}\uFF09`,
+      suggestion: `\u5C06 ${path} \u7684\u503C\u4FEE\u6539\u4E3A ${expected}`
+    };
+  }
+  if (err.keyword === "enum" && Array.isArray(params.allowedValues)) {
+    const allowed = params.allowedValues.map((v) => JSON.stringify(v)).join(", ");
+    return {
+      message: `${base}: allowed values [${allowed}]\uFF08\u8BF7\u4ECE\u5141\u8BB8\u7684\u679A\u4E3E\u503C\u4E2D\u9009\u62E9\u5176\u4E00\uFF09`,
+      suggestion: `\u5C06 ${path} \u4FEE\u6539\u4E3A\u5408\u6CD5\u679A\u4E3E\u503C\u4E4B\u4E00\uFF1A${allowed}`
+    };
+  }
+  if (err.keyword === "additionalProperties" && typeof params.additionalProperty === "string") {
+    const extra = JSON.stringify(params.additionalProperty);
+    if (schemaName === "project" && path.endsWith("/provider") && params.additionalProperty === "plugin") {
+      return {
+        message: `${base}: ${extra}\uFF08project \u4F5C\u7528\u57DF\u63D0\u4F9B\u65B9\u4E0D\u652F\u6301 plugin \u5B57\u6BB5\uFF0C\u8BF7\u5220\u9664 plugin \u5E76\u4F7F\u7528\u672C\u5730\u76F8\u5BF9\u8DEF\u5F84\u6216\u8F6F\u94FE\u63A5\u6307\u5B9A skill\uFF09`,
+        suggestion: `\u5220\u9664 ${path} \u4E0B\u7684 "plugin" \u5B57\u6BB5\uFF0C\u4EC5\u4FDD\u7559 scope: "project" \u4E0E skill`
+      };
+    }
+    return {
+      message: `${base}: ${extra}\uFF08\u8BF7\u5220\u9664\u672A\u5728 Schema \u4E2D\u58F0\u660E\u7684\u591A\u4F59\u5B57\u6BB5 ${extra}\uFF09`,
+      suggestion: `\u5220\u9664\u591A\u4F59\u5B57\u6BB5 ${extra}`
+    };
+  }
+  return { message: base };
+}
 function validateAgainstSchema(schemaName, data, failureCode) {
   const validate = getValidator(schemaName);
   const valid = validate(data);
   if (valid) {
     return { valid: true, diagnostics: [], data };
   }
-  const diagnostics = (validate.errors || []).map((err) => ({
-    code: failureCode,
-    severity: "error",
-    message: `${err.instancePath || "/"} ${err.message || "validation failed"}`,
-    source: {
-      label: schemaName === "project" ? "<project>" : schemaName === "diagnostic-envelope" ? "<external>" : "<index>"
-    }
-  }));
+  const diagnostics = (validate.errors || []).map((err) => {
+    const formatted = formatAjvError(err, schemaName);
+    return {
+      code: failureCode,
+      severity: "error",
+      message: formatted.message,
+      source: {
+        label: schemaName === "project" ? "<project>" : schemaName === "diagnostic-envelope" ? "<external>" : "<index>"
+      },
+      ...formatted.suggestion ? { suggestion: formatted.suggestion } : {}
+    };
+  });
   return { valid: false, diagnostics };
 }
 
@@ -962,8 +1005,9 @@ function validateProjectOverlay(data) {
         diagnostics: [{
           code: "DOCUMENT_KIND_MISMATCH",
           severity: "error",
-          message: `Unknown documentKind for project overlay: ${JSON.stringify(documentKind)}`,
-          source: { label: "<project>" }
+          message: `Unknown documentKind for project overlay: ${JSON.stringify(documentKind)}; expected "v2-binding" or "v2-projection"\uFF08\u82E5\u4E3A v1 \u9879\u76EE\u8986\u76D6\u914D\u7F6E\uFF0C\u8BF7\u7701\u7565 documentKind \u5E76\u8BBE schemaVersion: 1\uFF09`,
+          source: { label: "<project>" },
+          suggestion: '\u5C06 documentKind \u4FEE\u6539\u4E3A "v2-binding" \u6216 "v2-projection"\uFF0C\u6216\u79FB\u9664 documentKind \u4EE5\u6309 v1 \u9879\u76EE\u8986\u76D6\u6821\u9A8C'
         }]
       };
     }
@@ -1004,36 +1048,507 @@ function validateEffectiveIndex(data) {
   return { ok: true, data: result.data, diagnostics: [] };
 }
 
+// src/v2/migration.ts
+import {
+  readFileSync as readFileSync2,
+  writeFileSync,
+  existsSync as existsSync2,
+  mkdirSync,
+  renameSync,
+  unlinkSync,
+  lstatSync,
+  realpathSync
+} from "fs";
+import { resolve as resolve2, relative, isAbsolute as isAbsolute2, dirname as dirname2, basename } from "path";
+var CONVERSION_ALGORITHM_VERSION = "2.0.0";
+function generateSyntheticIdentity(entry) {
+  const canonicalInput = {
+    ref: entry.ref,
+    provider: {
+      scope: entry.provider.scope,
+      plugin: entry.provider.plugin ?? null,
+      skill: entry.provider.skill
+    },
+    kind: entry.kind
+  };
+  const syntheticDigest = computeContentHash(canonicalInput);
+  const suffix = syntheticDigest.slice("sha256:".length, "sha256:".length + 16);
+  return {
+    v1Ref: entry.ref,
+    familyImplementationId: `synthetic.family.${suffix}`,
+    serviceImplementationId: `synthetic.service.${suffix}`,
+    syntheticDigest,
+    provenance: `v1:${entry.provider.scope}:${entry.provider.plugin ?? "project"}`,
+    conversionAlgorithmVersion: CONVERSION_ALGORITHM_VERSION
+  };
+}
+function convertOverrideToBinding(override, mapping) {
+  if (override.ref !== mapping.ref) throw new Error(`Migration mapping ref mismatch: ${override.ref} != ${mapping.ref}`);
+  const sourceDigest = computeContentHash(override);
+  const v2Binding = {
+    familyId: mapping.familyId,
+    apiIdentity: { ...mapping.apiIdentity },
+    implementationIdentity: { ...mapping.implementationIdentity },
+    providerSelector: { ...mapping.providerSelector },
+    selectionSource: "synthetic-migration",
+    conformanceEvidence: { ...mapping.conformanceEvidence }
+  };
+  const conversionDigest = computeContentHash({
+    sourceDigest,
+    v2Binding,
+    targetPath: mapping.targetPath,
+    conversionAlgorithmVersion: CONVERSION_ALGORITHM_VERSION
+  });
+  return {
+    v1Ref: override.ref,
+    v2Binding,
+    sourceDigest,
+    conversionAlgorithmVersion: CONVERSION_ALGORITHM_VERSION,
+    conversionDigest
+  };
+}
+function detectCollisions(syntheticIds, bindingConversions, existingV2Entries) {
+  const collisions = [];
+  for (const synId of syntheticIds) {
+    if (existingV2Entries.some(
+      (existing) => existing.familyImplementationId === synId.familyImplementationId && existing.serviceImplementationId === synId.serviceImplementationId
+    )) {
+      collisions.push({
+        ref: synId.v1Ref,
+        type: "identity-collision",
+        details: `Synthetic identity ${synId.familyImplementationId}/${synId.serviceImplementationId} already exists`
+      });
+    }
+  }
+  const byFamily = /* @__PURE__ */ new Map();
+  for (const conversion of bindingConversions) {
+    const ids = byFamily.get(conversion.v2Binding.familyId) ?? /* @__PURE__ */ new Set();
+    ids.add(`${conversion.v2Binding.implementationIdentity.familyImplementationId}@${conversion.v2Binding.implementationIdentity.version}`);
+    byFamily.set(conversion.v2Binding.familyId, ids);
+  }
+  for (const [familyId, ids] of byFamily) {
+    if (ids.size > 1) {
+      collisions.push({
+        ref: familyId,
+        type: "unsafe-aggregation",
+        details: `Family ${familyId} maps to ${ids.size} implementations; choose one atomic family release`
+      });
+    }
+  }
+  return { hasCollisions: collisions.length > 0, collisions };
+}
+function computeMigrationPlanDigest(plan) {
+  const { planDigest: _ignored, ...withoutSelf } = plan;
+  return computeContentHash(withoutSelf);
+}
+function generateMigrationPlan(v1Entries, v1Overrides, context) {
+  const syntheticIdentities = v1Entries.map(generateSyntheticIdentity).sort((a, b) => a.v1Ref.localeCompare(b.v1Ref));
+  const bindingConversions = [];
+  const unresolved = [];
+  const targetFiles = {};
+  for (const override of [...v1Overrides].sort((a, b) => a.ref.localeCompare(b.ref))) {
+    const mapping = context.mappings.find((candidate) => candidate.ref === override.ref);
+    if (!mapping) {
+      unresolved.push({ ref: override.ref, type: "unresolved-mapping", details: "No explicit migration mapping was supplied" });
+      continue;
+    }
+    const conversion = convertOverrideToBinding(override, mapping);
+    bindingConversions.push(conversion);
+    if (Object.hasOwn(targetFiles, mapping.targetPath)) {
+      unresolved.push({ ref: override.ref, type: "binding-collision", details: `Multiple conversions target ${mapping.targetPath}` });
+    } else {
+      targetFiles[mapping.targetPath] = { documentKind: "v2-binding", schemaVersion: 2, bindings: [conversion.v2Binding] };
+    }
+  }
+  const collisionReport = detectCollisions(syntheticIdentities, bindingConversions, []);
+  collisionReport.collisions.push(...unresolved);
+  collisionReport.hasCollisions = collisionReport.collisions.length > 0;
+  const draft = {
+    documentKind: "v2-migration-plan",
+    schemaVersion: 2,
+    syntheticIdentities,
+    bindingConversions,
+    collisionReport,
+    sourceManifest: [...context.sourceManifest].sort((a, b) => a.path.localeCompare(b.path)),
+    targetFiles: Object.fromEntries(Object.entries(targetFiles).sort(([a], [b]) => a.localeCompare(b)))
+  };
+  return { ...draft, planDigest: computeMigrationPlanDigest(draft) };
+}
+function nearestExistingAncestor(path) {
+  let cursor = path;
+  while (!existsSync2(cursor)) {
+    const parent = dirname2(cursor);
+    if (parent === cursor) break;
+    cursor = parent;
+  }
+  return cursor;
+}
+function validateTransactionPath(targetPath, transactionRoot) {
+  if (isAbsolute2(targetPath) || targetPath.split(/[\\/]+/).includes("..")) {
+    return { ok: false, reason: `Target path must be relative and must not contain ..: ${targetPath}` };
+  }
+  const resolvedRoot = realpathSync(transactionRoot);
+  const resolvedTarget = resolve2(resolvedRoot, targetPath);
+  const relFromRoot = relative(resolvedRoot, resolvedTarget);
+  if (relFromRoot.startsWith("..") || isAbsolute2(relFromRoot)) {
+    return { ok: false, reason: `Target path escapes transaction root: ${targetPath}` };
+  }
+  const ancestor = nearestExistingAncestor(resolvedTarget);
+  const realAncestor = realpathSync(ancestor);
+  const relAncestor = relative(resolvedRoot, realAncestor);
+  if (relAncestor.startsWith("..") || isAbsolute2(relAncestor)) {
+    return { ok: false, reason: `Target path crosses a symlink outside transaction root: ${targetPath}` };
+  }
+  if (existsSync2(resolvedTarget) && lstatSync(resolvedTarget).isSymbolicLink()) {
+    return { ok: false, reason: `Target path must not be a symlink: ${targetPath}` };
+  }
+  return { ok: true };
+}
+function generateMigrationSnapshot(plan, transactionRoot, timestamp) {
+  const originalBytes = {};
+  const appliedDigests = {};
+  for (const filePath of Object.keys(plan.targetFiles)) {
+    const check = validateTransactionPath(filePath, transactionRoot);
+    if (!check.ok) throw new Error(check.reason);
+    const fullPath = resolve2(transactionRoot, filePath);
+    originalBytes[filePath] = existsSync2(fullPath) ? readFileSync2(fullPath).toString("base64") : "__NOT_EXISTS__";
+    const appliedBytes = Buffer.from(JSON.stringify(plan.targetFiles[filePath], null, 2) + "\n", "utf-8");
+    appliedDigests[filePath] = computeContentHash(appliedBytes.toString("base64"));
+  }
+  const snapshotDigest = computeContentHash({ planDigest: plan.planDigest, originalBytes, appliedDigests, timestamp });
+  return { schemaVersion: 2, snapshotDigest, timestamp, planDigest: plan.planDigest, originalBytes, appliedDigests };
+}
+function applyMigrationPlan(plan, transactionRoot, timestamp) {
+  if (computeMigrationPlanDigest(plan) !== plan.planDigest) {
+    return { ok: false, diagnostics: [{ code: "SNAPSHOT_TAMPERED", severity: "error", message: "Migration plan digest mismatch" }] };
+  }
+  if (plan.collisionReport.hasCollisions || plan.collisionReport.collisions.length > 0) {
+    return { ok: false, diagnostics: [{ code: "COLLISION_DETECTED", severity: "error", message: "Migration plan contains collisions or unresolved mappings" }] };
+  }
+  for (const source of plan.sourceManifest) {
+    const check = validateTransactionPath(source.path, transactionRoot);
+    if (!check.ok) return { ok: false, diagnostics: [{ code: "OUTPUT_WRITE_FAILED", severity: "error", message: check.reason }] };
+    const fullPath = resolve2(transactionRoot, source.path);
+    if (!existsSync2(fullPath) || computeContentHash(readFileSync2(fullPath).toString("base64")) !== source.digest) {
+      return { ok: false, diagnostics: [{ code: "SNAPSHOT_TAMPERED", severity: "error", message: `Migration source drift: ${source.path}` }] };
+    }
+  }
+  for (const filePath of Object.keys(plan.targetFiles)) {
+    const check = validateTransactionPath(filePath, transactionRoot);
+    if (!check.ok) return { ok: false, diagnostics: [{ code: "OUTPUT_WRITE_FAILED", severity: "error", message: check.reason }] };
+  }
+  let snapshot;
+  const writtenPaths = [];
+  try {
+    snapshot = generateMigrationSnapshot(plan, transactionRoot, timestamp);
+    for (const [filePath, content] of Object.entries(plan.targetFiles)) {
+      const fullPath = resolve2(transactionRoot, filePath);
+      mkdirSync(dirname2(fullPath), { recursive: true });
+      const tempPath = resolve2(dirname2(fullPath), `.${basename(fullPath)}.migration-${process.pid}`);
+      writeFileSync(tempPath, JSON.stringify(content, null, 2) + "\n", "utf-8");
+      renameSync(tempPath, fullPath);
+      writtenPaths.push(filePath);
+    }
+  } catch (error) {
+    if (snapshot) restoreSnapshotPaths(snapshot, transactionRoot, writtenPaths);
+    return { ok: false, diagnostics: [{ code: "OUTPUT_WRITE_FAILED", severity: "error", message: error instanceof Error ? error.message : String(error) }] };
+  }
+  return { ok: true, snapshot, diagnostics: [] };
+}
+function rollbackMigration(snapshot, transactionRoot) {
+  const recomputed = computeContentHash({
+    planDigest: snapshot.planDigest,
+    originalBytes: snapshot.originalBytes,
+    appliedDigests: snapshot.appliedDigests,
+    timestamp: snapshot.timestamp
+  });
+  if (recomputed !== snapshot.snapshotDigest) {
+    return { ok: false, restoredPaths: [], diagnostics: [{ code: "SNAPSHOT_TAMPERED", severity: "error", message: "Snapshot digest mismatch" }] };
+  }
+  for (const [filePath, expectedDigest] of Object.entries(snapshot.appliedDigests)) {
+    const check = validateTransactionPath(filePath, transactionRoot);
+    if (!check.ok) return { ok: false, restoredPaths: [], diagnostics: [{ code: "OUTPUT_WRITE_FAILED", severity: "error", message: check.reason }] };
+    const fullPath = resolve2(transactionRoot, filePath);
+    if (!existsSync2(fullPath)) {
+      return { ok: false, restoredPaths: [], diagnostics: [{ code: "SNAPSHOT_TAMPERED", severity: "error", message: `Rollback target drift: ${filePath} no longer exists` }] };
+    }
+    const actualDigest = computeContentHash(readFileSync2(fullPath).toString("base64"));
+    if (actualDigest !== expectedDigest) {
+      return { ok: false, restoredPaths: [], diagnostics: [{ code: "SNAPSHOT_TAMPERED", severity: "error", message: `Rollback target drift: ${filePath} changed after migration apply` }] };
+    }
+  }
+  const restoredPaths = restoreSnapshotPaths(snapshot, transactionRoot, Object.keys(snapshot.originalBytes));
+  return { ok: true, restoredPaths, diagnostics: [] };
+}
+function restoreSnapshotPaths(snapshot, transactionRoot, paths) {
+  const restoredPaths = [];
+  for (const filePath of paths) {
+    const base64Content = snapshot.originalBytes[filePath];
+    if (base64Content === void 0) continue;
+    const fullPath = resolve2(transactionRoot, filePath);
+    if (base64Content === "__NOT_EXISTS__") {
+      if (existsSync2(fullPath)) unlinkSync(fullPath);
+    } else {
+      mkdirSync(dirname2(fullPath), { recursive: true });
+      writeFileSync(fullPath, Buffer.from(base64Content, "base64"));
+    }
+    restoredPaths.push(filePath);
+  }
+  return restoredPaths;
+}
+
+// src/hosts.ts
+import { existsSync as existsSync3, readdirSync, realpathSync as realpathSync2 } from "fs";
+import { homedir } from "os";
+import { basename as basename2, join } from "path";
+var SUPPORTED_HOST_LIST = [
+  "codex",
+  "claude-code",
+  "claude",
+  "antigravity",
+  "antigravity-ide",
+  "agy",
+  "kimi",
+  "kimi-code",
+  "qoder",
+  "codebuddy",
+  "workbuddy",
+  "grok",
+  "cursor",
+  "deepseek-harness",
+  "dsh"
+];
+var SUPPORTED_HOSTS = new Set(SUPPORTED_HOST_LIST);
+var HOST_DEFAULT_DISCOVERY_SPECS = Object.freeze({
+  antigravity: {
+    canonicalHost: "antigravity",
+    aliases: ["antigravity-ide", "agy"],
+    cli: "agy",
+    workspaceSkillDirs: [".agents/skills", ".agent/skills"],
+    workspacePluginDirs: [".agents/plugins"],
+    userSkillDirs: [".gemini/config/skills"],
+    userPluginDirs: [".gemini/config/plugins"],
+    pluginSkillSubdir: "skills",
+    pluginManifest: "plugin.json"
+  }
+});
+function isSupportedHost(value) {
+  return typeof value === "string" && SUPPORTED_HOSTS.has(value);
+}
+function normalizeHostId(host) {
+  if (host === "claude") return "claude-code";
+  if (host === "antigravity-ide" || host === "agy") return "antigravity";
+  if (host === "kimi-code") return "kimi";
+  if (host === "dsh") return "deepseek-harness";
+  return host;
+}
+function hostsMatch(a, b) {
+  if (!a || !b) return false;
+  return normalizeHostId(a) === normalizeHostId(b);
+}
+function resolveDeclaredHostSupport(hostSupport, host) {
+  if (!hostSupport) return void 0;
+  if (host in hostSupport) return hostSupport[host];
+  const normalized = normalizeHostId(host);
+  if (normalized in hostSupport) return hostSupport[normalized];
+  if (normalized === "claude-code" && "claude" in hostSupport) {
+    return hostSupport["claude"];
+  }
+  if (normalized === "antigravity") {
+    if ("antigravity-ide" in hostSupport) return hostSupport["antigravity-ide"];
+    if ("agy" in hostSupport) return hostSupport["agy"];
+  }
+  if (normalized === "kimi" && "kimi-code" in hostSupport) {
+    return hostSupport["kimi-code"];
+  }
+  if (normalized === "deepseek-harness" && "dsh" in hostSupport) {
+    return hostSupport["dsh"];
+  }
+  return void 0;
+}
+function formatSupportedHosts() {
+  return SUPPORTED_HOST_LIST.map((h) => `'${h}'`).join(", ");
+}
+function stripLeadingSkillsSegment(skill) {
+  return skill.startsWith("skills/") && skill.length > "skills/".length ? skill.slice("skills/".length) : skill;
+}
+function listSubdirsSafe(dir) {
+  try {
+    return readdirSync(dir, { withFileTypes: true }).filter((entry) => entry.isDirectory() || entry.isSymbolicLink()).map((entry) => entry.name).sort();
+  } catch {
+    return [];
+  }
+}
+function addSkillCandidatesFromSkillsDir(out, skillsDir, skill, skillLeaf) {
+  out.push(join(skillsDir, skill, "SKILL.md"));
+  if (skillLeaf !== skill) {
+    out.push(join(skillsDir, skillLeaf, "SKILL.md"));
+  }
+}
+function collectFromPluginsContainer(pluginsDir, skill, skillLeaf, pluginId) {
+  const preferred = [];
+  if (pluginId) {
+    const namedRoot = join(pluginsDir, pluginId);
+    if (existsSync3(namedRoot)) {
+      preferred.push(join(namedRoot, skill, "SKILL.md"));
+      preferred.push(join(namedRoot, "skills", skillLeaf, "SKILL.md"));
+      if (skillLeaf !== skill) preferred.push(join(namedRoot, "skills", skill, "SKILL.md"));
+      if (preferred.some((p) => existsSync3(p))) return preferred;
+    }
+  }
+  const wildcard = [];
+  for (const child of listSubdirsSafe(pluginsDir)) {
+    const childSkills = join(pluginsDir, child, "skills");
+    if (existsSync3(childSkills)) {
+      addSkillCandidatesFromSkillsDir(wildcard, childSkills, skill, skillLeaf);
+    }
+  }
+  return [...preferred, ...wildcard];
+}
+function discoverDefaultAntigravityRoots(options) {
+  const spec = HOST_DEFAULT_DISCOVERY_SPECS.antigravity;
+  const cwd = options.cwd ?? process.cwd();
+  const home = options.homeDir ?? process.env.HOME ?? homedir();
+  const roots = [];
+  for (const rel of spec.workspaceSkillDirs) {
+    const candidate = join(cwd, rel);
+    if (existsSync3(candidate)) roots.push(candidate);
+  }
+  if (options.scope === "project") {
+    if (existsSync3(cwd) && roots.length === 0) roots.push(cwd);
+    return roots;
+  }
+  for (const rel of spec.workspacePluginDirs) {
+    const candidate = join(cwd, rel);
+    if (existsSync3(candidate)) roots.push(candidate);
+  }
+  if (home) {
+    for (const rel of spec.userSkillDirs) {
+      const candidate = join(home, rel);
+      if (existsSync3(candidate)) roots.push(candidate);
+    }
+    for (const rel of spec.userPluginDirs) {
+      const candidate = join(home, rel);
+      if (existsSync3(candidate)) roots.push(candidate);
+    }
+  }
+  return roots;
+}
+function collectHostCandidateSkillMdPaths(options) {
+  const { host, dirs, scope, skill, pluginId } = options;
+  if (normalizeHostId(host ?? "") !== "antigravity") {
+    return dirs.map((dir) => join(dir, skill, "SKILL.md"));
+  }
+  const spec = HOST_DEFAULT_DISCOVERY_SPECS.antigravity;
+  const skillLeaf = stripLeadingSkillsSegment(skill);
+  const candidates = [];
+  for (const dir of dirs) {
+    candidates.push(join(dir, skill, "SKILL.md"));
+    const base = basename2(dir);
+    if (base === "skills" && skillLeaf !== skill) {
+      candidates.push(join(dir, skillLeaf, "SKILL.md"));
+    }
+    if (scope === "plugin" && skillLeaf === skill && existsSync3(join(dir, "skills"))) {
+      candidates.push(join(dir, "skills", skillLeaf, "SKILL.md"));
+    }
+    for (const wsRel of spec.workspaceSkillDirs) {
+      const wsDir = join(dir, wsRel);
+      if (existsSync3(wsDir)) addSkillCandidatesFromSkillsDir(candidates, wsDir, skill, skillLeaf);
+    }
+    if (scope === "plugin") {
+      for (const wpRel of spec.workspacePluginDirs) {
+        const wpDir = join(dir, wpRel);
+        if (existsSync3(wpDir)) {
+          candidates.push(...collectFromPluginsContainer(wpDir, skill, skillLeaf, pluginId));
+        }
+      }
+      const geminiConfig = base === ".gemini" ? join(dir, "config") : existsSync3(join(dir, ".gemini", "config")) ? join(dir, ".gemini", "config") : base === "config" ? dir : void 0;
+      if (geminiConfig && existsSync3(geminiConfig)) {
+        const uSkills = join(geminiConfig, "skills");
+        if (existsSync3(uSkills)) addSkillCandidatesFromSkillsDir(candidates, uSkills, skill, skillLeaf);
+        const uPlugins = join(geminiConfig, "plugins");
+        if (existsSync3(uPlugins)) {
+          candidates.push(...collectFromPluginsContainer(uPlugins, skill, skillLeaf, pluginId));
+        }
+      }
+      if (base === "plugins") {
+        candidates.push(...collectFromPluginsContainer(dir, skill, skillLeaf, pluginId));
+      }
+    }
+  }
+  return candidates;
+}
+function resolveHostSkillPath(options) {
+  if (options.declaredSkillPath) return options.declaredSkillPath;
+  if (normalizeHostId(options.host) !== "antigravity") return options.defaultSkillPath;
+  const { canonicalRoot, defaultSkillPath, pluginId } = options;
+  if (!existsSync3(canonicalRoot) || existsSync3(join(canonicalRoot, defaultSkillPath, "SKILL.md"))) {
+    return defaultSkillPath;
+  }
+  const leaf = stripLeadingSkillsSegment(defaultSkillPath);
+  const relCandidates = /* @__PURE__ */ new Set([
+    leaf,
+    `skills/${leaf}`,
+    `.agents/skills/${leaf}`,
+    `.agent/skills/${leaf}`,
+    `.gemini/config/skills/${leaf}`
+  ]);
+  for (const containerRel of [".agents/plugins", "plugins", ".gemini/config/plugins"]) {
+    const containerDir = join(canonicalRoot, containerRel);
+    if (!existsSync3(containerDir)) continue;
+    if (pluginId && existsSync3(join(containerDir, pluginId, "skills", leaf, "SKILL.md"))) {
+      return `${containerRel}/${pluginId}/skills/${leaf}`;
+    }
+    for (const child of listSubdirsSafe(containerDir)) {
+      relCandidates.add(`${containerRel}/${child}/skills/${leaf}`);
+    }
+  }
+  const matchedRelByRealpath = /* @__PURE__ */ new Map();
+  for (const rel of relCandidates) {
+    const md = join(canonicalRoot, rel, "SKILL.md");
+    if (!existsSync3(md)) continue;
+    try {
+      matchedRelByRealpath.set(realpathSync2(md), rel);
+    } catch {
+      matchedRelByRealpath.set(md, rel);
+    }
+  }
+  if (matchedRelByRealpath.size === 1) {
+    return [...matchedRelByRealpath.values()][0];
+  }
+  return defaultSkillPath;
+}
+
 // src/provider/verify.ts
-import { existsSync as existsSync2, realpathSync as realpathSync2, statSync as statSync2 } from "fs";
-import { join as join2, isAbsolute as isAbsolute3, relative as relative2 } from "path";
+import { existsSync as existsSync4, lstatSync as lstatSync3, realpathSync as realpathSync4, statSync as statSync2 } from "fs";
+import { join as join3, isAbsolute as isAbsolute4, relative as relative3, resolve as resolve4 } from "path";
 
 // src/v2/bundle-digest.ts
 import { createHash as createHash2 } from "crypto";
-import { readdirSync, readFileSync as readFileSync2, statSync, lstatSync, readlinkSync, realpathSync } from "fs";
-import { join, relative, posix, isAbsolute as isAbsolute2, resolve as resolve2, normalize } from "path";
+import { readdirSync as readdirSync2, readFileSync as readFileSync3, statSync, lstatSync as lstatSync2, readlinkSync, realpathSync as realpathSync3 } from "fs";
+import { join as join2, relative as relative2, posix, isAbsolute as isAbsolute3, resolve as resolve3, normalize } from "path";
 function computeBundleTreeDigest(root, roots) {
   const entries = [];
-  const canonicalRoot = realpathSync(root);
+  const canonicalRoot = realpathSync3(root);
   const seenRoots = /* @__PURE__ */ new Set();
   for (const rootDir of roots) {
-    if (isAbsolute2(rootDir) || rootDir.split(/[\\/]+/).includes("..")) {
+    if (isAbsolute3(rootDir) || rootDir.split(/[\\/]+/).includes("..")) {
       throw new Error(`Bundle root must be a contained relative path: ${rootDir}`);
     }
     const normalizedRoot = normalize(rootDir).replaceAll("\\", "/").replace(/^\.\//, "");
     if (!normalizedRoot || normalizedRoot === ".") {
       throw new Error("Bundle root must name a directory below canonicalRoot");
     }
-    const absRoot = resolve2(canonicalRoot, normalizedRoot);
-    const rel = relative(canonicalRoot, absRoot);
-    if (rel.startsWith("..") || isAbsolute2(rel)) {
+    const absRoot = resolve3(canonicalRoot, normalizedRoot);
+    const rel = relative2(canonicalRoot, absRoot);
+    if (rel.startsWith("..") || isAbsolute3(rel)) {
       throw new Error(`Bundle root escapes canonicalRoot: ${rootDir}`);
     }
     if (seenRoots.has(absRoot)) {
       throw new Error(`Duplicate normalized bundle root: ${rootDir}`);
     }
     seenRoots.add(absRoot);
-    const rootStat = lstatSync(absRoot);
+    const rootStat = lstatSync2(absRoot);
     if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
       throw new Error(`Bundle root must be a real directory: ${rootDir}`);
     }
@@ -1046,29 +1561,29 @@ function computeBundleTreeDigest(root, roots) {
 }
 function walkBundleDir(bundleRoot, dir, entries) {
   let items;
-  items = readdirSync(dir);
+  items = readdirSync2(dir);
   for (const item of items) {
-    const absPath = join(dir, item);
-    const relPath = posix.normalize(relative(bundleRoot, absPath).replaceAll("\\", "/"));
+    const absPath = join2(dir, item);
+    const relPath = posix.normalize(relative2(bundleRoot, absPath).replaceAll("\\", "/"));
     if (relPath.startsWith("..")) {
       throw new Error(`Bundle entry escapes root: ${relPath}`);
     }
-    const lstat = lstatSync(absPath);
+    const lstat = lstatSync2(absPath);
     if (lstat.isSymbolicLink()) {
       const target = readlinkSync(absPath);
-      const resolvedTarget = isAbsolute2(target) ? target : resolve2(dir, target);
-      const resolvedRel = relative(bundleRoot, resolvedTarget);
-      if (resolvedRel.startsWith("..") || isAbsolute2(resolvedRel)) {
+      const resolvedTarget = isAbsolute3(target) ? target : resolve3(dir, target);
+      const resolvedRel = relative2(bundleRoot, resolvedTarget);
+      if (resolvedRel.startsWith("..") || isAbsolute3(resolvedRel)) {
         throw new Error(`Symlink ${relPath} escapes bundle root, pointing to ${resolvedTarget}`);
       }
       let finalTarget;
       try {
-        finalTarget = realpathSync(absPath);
+        finalTarget = realpathSync3(absPath);
       } catch {
         throw new Error(`Dangling or unreadable symlink in bundle: ${relPath}`);
       }
-      const finalRel = relative(bundleRoot, finalTarget);
-      if (finalRel.startsWith("..") || isAbsolute2(finalRel)) {
+      const finalRel = relative2(bundleRoot, finalTarget);
+      if (finalRel.startsWith("..") || isAbsolute3(finalRel)) {
         throw new Error(`Symlink ${relPath} ultimately escapes bundle root, resolving to ${finalTarget}`);
       }
       try {
@@ -1076,7 +1591,7 @@ function walkBundleDir(bundleRoot, dir, entries) {
         if (targetStat.isDirectory()) {
           throw new Error(`Symlink ${relPath} points to a directory, not a regular file`);
         }
-        const content = readFileSync2(absPath);
+        const content = readFileSync3(absPath);
         const contentHash = createHash2("sha256").update(content).digest("hex");
         entries.push({ path: relPath, type: "symlink-file", contentHash });
       } catch (err) {
@@ -1086,7 +1601,7 @@ function walkBundleDir(bundleRoot, dir, entries) {
     } else if (lstat.isDirectory()) {
       walkBundleDir(bundleRoot, absPath, entries);
     } else if (lstat.isFile()) {
-      const content = readFileSync2(absPath);
+      const content = readFileSync3(absPath);
       const contentHash = createHash2("sha256").update(content).digest("hex");
       entries.push({ path: relPath, type: "file", contentHash });
     }
@@ -1101,14 +1616,6 @@ function diag4(code, message) {
     message,
     source: { label: "<external>" }
   };
-}
-function checkSkillMd(dir, skill) {
-  const skillPath = join2(dir, skill, "SKILL.md");
-  return existsSync2(skillPath);
-}
-function resolveCanonical(dir, skill) {
-  const skillPath = join2(dir, skill, "SKILL.md");
-  return realpathSync2(skillPath);
 }
 function verifyProvider(input) {
   const rawInput = input;
@@ -1162,14 +1669,38 @@ function verifyProvider(input) {
     dirs = projectRoots;
   }
   const canonicalPaths = /* @__PURE__ */ new Set();
+  const pluginId = provider.scope === "plugin" ? provider.plugin : void 0;
   for (const dir of dirs) {
-    if (checkSkillMd(dir, provider.skill)) {
-      try {
-        const canonical = resolveCanonical(dir, provider.skill);
-        canonicalPaths.add(canonical);
-      } catch {
-        const fallback = join2(dir, provider.skill, "SKILL.md");
-        canonicalPaths.add(fallback);
+    if (!existsSync4(dir)) {
+      continue;
+    }
+    const candidateSkillMdPaths = collectHostCandidateSkillMdPaths({
+      host,
+      dirs: [dir],
+      scope: provider.scope,
+      skill: provider.skill,
+      pluginId
+    });
+    for (const candidateSkillMdPath of candidateSkillMdPaths) {
+      const rel = relative3(resolve4(dir), candidateSkillMdPath);
+      const pathCheck = validateTransactionPath(rel, dir);
+      if (!pathCheck.ok) {
+        return {
+          status: "not-found",
+          diagnostics: [
+            diag4(
+              "PROVIDER_NOT_FOUND",
+              `Unsafe skill path rejected for "${provider.skill}": ${pathCheck.reason ?? rel}`
+            )
+          ]
+        };
+      }
+      if (existsSync4(candidateSkillMdPath) && !lstatSync3(candidateSkillMdPath).isSymbolicLink() && lstatSync3(candidateSkillMdPath).isFile()) {
+        try {
+          canonicalPaths.add(realpathSync4(candidateSkillMdPath));
+        } catch {
+          canonicalPaths.add(candidateSkillMdPath);
+        }
       }
     }
   }
@@ -1198,7 +1729,7 @@ function verifyProvider(input) {
   };
 }
 function verifyRunLock(lock, callerHost) {
-  if (lock.provider.host !== callerHost) {
+  if (!isSupportedHost(callerHost) || !hostsMatch(lock.provider.host, callerHost)) {
     return {
       status: "not-found",
       diagnostics: [diag4("HOST_MISMATCH", `Caller host "${callerHost}" does not match run lock provider host "${lock.provider.host}"`)]
@@ -1211,20 +1742,20 @@ function verifyRunLock(lock, callerHost) {
   }
   const { canonicalRoot, skillPath } = lock.provider;
   const inventory = lock.inventoryEntry;
-  if (inventory.pluginId !== lock.provider.pluginId || inventory.projectAuthority !== lock.provider.projectAuthority || inventory.host !== lock.provider.host || inventory.canonicalRoot !== canonicalRoot || inventory.version !== lock.implementationVersion || inventory.packageDigest !== lock.provider.packageDigest || inventory.provenance !== lock.provider.provenance) {
+  if (inventory.pluginId !== lock.provider.pluginId || inventory.projectAuthority !== lock.provider.projectAuthority || !hostsMatch(inventory.host, lock.provider.host) || inventory.canonicalRoot !== canonicalRoot || inventory.version !== lock.implementationVersion || inventory.packageDigest !== lock.provider.packageDigest || inventory.provenance !== lock.provider.provenance) {
     return {
       status: "not-found",
       diagnostics: [diag4("LOCK_INCONSISTENCY", "Run lock provider identity/host/package/provenance no longer matches trusted inventory")]
     };
   }
-  if (!existsSync2(canonicalRoot)) {
+  if (!existsSync4(canonicalRoot)) {
     return {
       status: "not-found",
       diagnostics: [diag4("LOCK_INCONSISTENCY", `Lock provider canonicalRoot does not exist: ${canonicalRoot}`)]
     };
   }
-  const skillMdPath = join2(canonicalRoot, skillPath, "SKILL.md");
-  if (!existsSync2(skillMdPath)) {
+  const skillMdPath = join3(canonicalRoot, skillPath, "SKILL.md");
+  if (!existsSync4(skillMdPath)) {
     return {
       status: "not-found",
       diagnostics: [diag4("LOCK_INCONSISTENCY", `SKILL.md not found at ${skillMdPath} during reverify`)]
@@ -1232,7 +1763,7 @@ function verifyRunLock(lock, callerHost) {
   }
   let realPath;
   try {
-    realPath = realpathSync2(skillMdPath);
+    realPath = realpathSync4(skillMdPath);
   } catch {
     return {
       status: "not-found",
@@ -1241,15 +1772,15 @@ function verifyRunLock(lock, callerHost) {
   }
   let realCanonicalRoot;
   try {
-    realCanonicalRoot = realpathSync2(canonicalRoot);
+    realCanonicalRoot = realpathSync4(canonicalRoot);
   } catch {
     return {
       status: "not-found",
       diagnostics: [diag4("LOCK_INCONSISTENCY", `Cannot resolve realpath for lock provider root ${canonicalRoot}`)]
     };
   }
-  const relativeRealPath = relative2(realCanonicalRoot, realPath);
-  if (relativeRealPath.startsWith("..") || isAbsolute3(relativeRealPath)) {
+  const relativeRealPath = relative3(realCanonicalRoot, realPath);
+  if (relativeRealPath.startsWith("..") || isAbsolute4(relativeRealPath)) {
     return {
       status: "not-found",
       diagnostics: [diag4("LOCK_INCONSISTENCY", `Realpath escape detected during reverify: ${skillMdPath} resolves outside canonical root`)]
@@ -1294,13 +1825,13 @@ function verifyRunLock(lock, callerHost) {
 }
 function verifyProviderV2Path(v2, callerHost) {
   const { implementation, inventoryEntry, providerInstance, inventorySnapshot } = v2;
-  if (inventoryEntry.host !== callerHost) {
+  if (!isSupportedHost(callerHost) || !hostsMatch(inventoryEntry.host, callerHost)) {
     return {
       status: "not-found",
       diagnostics: [diag4("HOST_MISMATCH", `Caller host "${callerHost}" does not match inventory host "${inventoryEntry.host}"`)]
     };
   }
-  if (providerInstance.host && providerInstance.host !== callerHost) {
+  if (providerInstance.host && !hostsMatch(providerInstance.host, callerHost)) {
     return {
       status: "not-found",
       diagnostics: [diag4("HOST_MISMATCH", `Caller host "${callerHost}" does not match provider instance host "${providerInstance.host}"`)]
@@ -1313,20 +1844,20 @@ function verifyProviderV2Path(v2, callerHost) {
       diagnostics: [diag4("PROVIDER_REJECTED", `Provider skillPath must not contain "..": ${skillPath}`)]
     };
   }
-  if (isAbsolute3(skillPath)) {
+  if (isAbsolute4(skillPath)) {
     return {
       status: "not-found",
       diagnostics: [diag4("PROVIDER_REJECTED", `Provider skillPath must be relative: ${skillPath}`)]
     };
   }
-  if (!existsSync2(canonicalRoot)) {
+  if (!existsSync4(canonicalRoot)) {
     return {
       status: "not-found",
       diagnostics: [diag4("PROVIDER_REJECTED", `Provider canonicalRoot does not exist: ${canonicalRoot}`)]
     };
   }
-  const skillMdPath = join2(canonicalRoot, skillPath, "SKILL.md");
-  if (!existsSync2(skillMdPath)) {
+  const skillMdPath = join3(canonicalRoot, skillPath, "SKILL.md");
+  if (!existsSync4(skillMdPath)) {
     return {
       status: "not-found",
       diagnostics: [diag4("PROVIDER_REJECTED", `SKILL.md not found at ${skillMdPath}`)]
@@ -1334,7 +1865,7 @@ function verifyProviderV2Path(v2, callerHost) {
   }
   let realPath;
   try {
-    realPath = realpathSync2(skillMdPath);
+    realPath = realpathSync4(skillMdPath);
   } catch {
     return {
       status: "not-found",
@@ -1343,15 +1874,15 @@ function verifyProviderV2Path(v2, callerHost) {
   }
   let realCanonicalRoot;
   try {
-    realCanonicalRoot = realpathSync2(canonicalRoot);
+    realCanonicalRoot = realpathSync4(canonicalRoot);
   } catch {
     return {
       status: "not-found",
       diagnostics: [diag4("PROVIDER_REJECTED", `Cannot resolve realpath for provider root ${canonicalRoot}`)]
     };
   }
-  const relativeRealPath = relative2(realCanonicalRoot, realPath);
-  if (relativeRealPath.startsWith("..") || isAbsolute3(relativeRealPath)) {
+  const relativeRealPath = relative3(realCanonicalRoot, realPath);
+  if (relativeRealPath.startsWith("..") || isAbsolute4(relativeRealPath)) {
     return {
       status: "not-found",
       diagnostics: [diag4("PROVIDER_REJECTED", `Realpath escape detected: ${skillMdPath} resolves outside canonical root`)]
@@ -1423,7 +1954,7 @@ function verifyProviderV2Path(v2, callerHost) {
   if (!inventoryDigestPattern.test(inventorySnapshot.digest)) {
     return { status: "not-found", diagnostics: [diag4("SNAPSHOT_TAMPERED", "Inventory snapshot digest is invalid")], observed };
   }
-  if (providerInstance.canonicalRoot !== inventoryEntry.canonicalRoot || providerInstance.projectAuthority !== inventoryEntry.projectAuthority || providerInstance.host !== inventoryEntry.host || providerInstance.packageDigest !== inventoryEntry.packageDigest || providerInstance.provenance !== inventoryEntry.provenance) {
+  if (providerInstance.canonicalRoot !== inventoryEntry.canonicalRoot || providerInstance.projectAuthority !== inventoryEntry.projectAuthority || !hostsMatch(providerInstance.host, inventoryEntry.host) || providerInstance.packageDigest !== inventoryEntry.packageDigest || providerInstance.provenance !== inventoryEntry.provenance) {
     return {
       status: "not-found",
       diagnostics: [diag4("PROVIDER_REJECTED", "Provider instance does not match trusted inventory host, root, package, or provenance")],
@@ -1607,7 +2138,6 @@ function budgetAllows(budget, requested) {
 }
 
 // src/resolver/index.ts
-var SUPPORTED_HOSTS = /* @__PURE__ */ new Set(["codex", "claude-code"]);
 function v2diag2(code, message) {
   return { code, severity: "error", message, source: { label: "<index>" } };
 }
@@ -1713,7 +2243,7 @@ function installationKey(entry) {
     entry.pluginId,
     entry.projectAuthority ?? "",
     entry.version,
-    entry.host,
+    normalizeHostId(entry.host),
     entry.canonicalRoot
   ].join("\0");
 }
@@ -1842,8 +2372,8 @@ function computeProjectionEntry(serviceId, serviceKind, serviceIntents, serviceS
       let verificationAttestationDigest = null;
       let skillPath = svcImpl.skill;
       if (invEntry) {
-        const supportedHost = invEntry.host === "claude-code" || invEntry.host === "codex" ? invEntry.host : void 0;
-        const declaredHostSupport = supportedHost ? impl.hostSupport?.[supportedHost] : void 0;
+        const supportedHost = isSupportedHost(invEntry.host) ? invEntry.host : void 0;
+        const declaredHostSupport = supportedHost ? resolveDeclaredHostSupport(impl.hostSupport, supportedHost) : void 0;
         if (!supportedHost || impl.hostSupport && (!declaredHostSupport || declaredHostSupport.available === false)) {
           candidates.push({
             impl,
@@ -1856,7 +2386,13 @@ function computeProjectionEntry(serviceId, serviceKind, serviceIntents, serviceS
           });
           continue;
         }
-        skillPath = declaredHostSupport?.skillPath ?? svcImpl.skill;
+        skillPath = resolveHostSkillPath({
+          host: supportedHost,
+          canonicalRoot: invEntry.canonicalRoot,
+          declaredSkillPath: declaredHostSupport?.skillPath,
+          defaultSkillPath: svcImpl.skill,
+          pluginId: impl.pluginId
+        });
         const providerInstance = {
           scope: impl.lifecycle.ownership === "project-local" ? "project" : "plugin",
           pluginId: impl.pluginId,
@@ -1943,7 +2479,7 @@ function computeProjectionEntry(serviceId, serviceKind, serviceIntents, serviceS
       continue;
     }
     const boundImpl = candidates.find(
-      (c) => c.impl.familyImplementationId === binding.implementationIdentity.familyImplementationId && c.impl.version === binding.implementationIdentity.version && c.invEntry !== void 0 && binding.providerSelector.pluginId === c.impl.pluginId && binding.providerSelector.scope === (c.impl.lifecycle.ownership === "project-local" ? "project" : "plugin") && binding.providerSelector.projectAuthority === c.impl.projectAuthority && binding.providerSelector.host === c.invEntry.host && binding.providerSelector.canonicalRoot === c.invEntry.canonicalRoot && binding.providerSelector.packageDigest === c.invEntry.packageDigest && binding.providerSelector.bundleDigest === c.impl.bundle.treeDigest && binding.providerSelector.provenance === c.invEntry.provenance
+      (c) => c.impl.familyImplementationId === binding.implementationIdentity.familyImplementationId && c.impl.version === binding.implementationIdentity.version && c.invEntry !== void 0 && binding.providerSelector.pluginId === c.impl.pluginId && binding.providerSelector.scope === (c.impl.lifecycle.ownership === "project-local" ? "project" : "plugin") && binding.providerSelector.projectAuthority === c.impl.projectAuthority && hostsMatch(binding.providerSelector.host, c.invEntry.host) && binding.providerSelector.canonicalRoot === c.invEntry.canonicalRoot && binding.providerSelector.packageDigest === c.invEntry.packageDigest && binding.providerSelector.bundleDigest === c.impl.bundle.treeDigest && binding.providerSelector.provenance === c.invEntry.provenance
     );
     if (!boundImpl || !boundImpl.invEntry) {
       diagnostics.push({
@@ -1980,7 +2516,7 @@ function computeProjectionEntry(serviceId, serviceKind, serviceIntents, serviceS
   const enabledCandidates = candidates.filter((c) => {
     if (!c.isInstalled) return false;
     const binding = validBindings.find(
-      (b) => b.implementationIdentity.familyImplementationId === c.impl.familyImplementationId && b.implementationIdentity.version === c.impl.version && c.invEntry !== void 0 && b.providerSelector.pluginId === c.impl.pluginId && b.providerSelector.scope === (c.impl.lifecycle.ownership === "project-local" ? "project" : "plugin") && b.providerSelector.projectAuthority === c.impl.projectAuthority && b.providerSelector.host === c.invEntry.host && b.providerSelector.canonicalRoot === c.invEntry.canonicalRoot && b.providerSelector.packageDigest === c.invEntry.packageDigest && b.providerSelector.bundleDigest === c.impl.bundle.treeDigest && b.providerSelector.provenance === c.invEntry.provenance
+      (b) => b.implementationIdentity.familyImplementationId === c.impl.familyImplementationId && b.implementationIdentity.version === c.impl.version && c.invEntry !== void 0 && b.providerSelector.pluginId === c.impl.pluginId && b.providerSelector.scope === (c.impl.lifecycle.ownership === "project-local" ? "project" : "plugin") && b.providerSelector.projectAuthority === c.impl.projectAuthority && hostsMatch(b.providerSelector.host, c.invEntry.host) && b.providerSelector.canonicalRoot === c.invEntry.canonicalRoot && b.providerSelector.packageDigest === c.invEntry.packageDigest && b.providerSelector.bundleDigest === c.impl.bundle.treeDigest && b.providerSelector.provenance === c.invEntry.provenance
     );
     if (!binding) return false;
     if (binding.authorization && (isWriteService && binding.authorization.granted !== true || !budgetAllows(binding.authorization.sideEffectBudget, sideEffectCeiling ?? "none"))) {
@@ -2030,7 +2566,7 @@ function computeProjectionEntry(serviceId, serviceKind, serviceIntents, serviceS
       provenance: c.invEntry.provenance
     } : void 0;
     const authorization = validBindings.find(
-      (binding) => binding.implementationIdentity.familyImplementationId === c.impl.familyImplementationId && binding.implementationIdentity.version === c.impl.version && c.invEntry !== void 0 && binding.providerSelector.scope === (c.impl.lifecycle.ownership === "project-local" ? "project" : "plugin") && binding.providerSelector.pluginId === c.impl.pluginId && binding.providerSelector.projectAuthority === c.impl.projectAuthority && binding.providerSelector.host === c.invEntry.host && binding.providerSelector.canonicalRoot === c.invEntry.canonicalRoot && binding.providerSelector.packageDigest === c.invEntry.packageDigest && binding.providerSelector.bundleDigest === c.impl.bundle.treeDigest && binding.providerSelector.provenance === c.invEntry.provenance
+      (binding) => binding.implementationIdentity.familyImplementationId === c.impl.familyImplementationId && binding.implementationIdentity.version === c.impl.version && c.invEntry !== void 0 && binding.providerSelector.scope === (c.impl.lifecycle.ownership === "project-local" ? "project" : "plugin") && binding.providerSelector.pluginId === c.impl.pluginId && binding.providerSelector.projectAuthority === c.impl.projectAuthority && hostsMatch(binding.providerSelector.host, c.invEntry.host) && binding.providerSelector.canonicalRoot === c.invEntry.canonicalRoot && binding.providerSelector.packageDigest === c.invEntry.packageDigest && binding.providerSelector.bundleDigest === c.impl.bundle.treeDigest && binding.providerSelector.provenance === c.invEntry.provenance
     )?.authorization;
     return {
       serviceId,
@@ -2232,8 +2768,8 @@ function buildV2Projection(input) {
 }
 
 // src/doctor/professional-conclusion.ts
-import { existsSync as existsSync3, readFileSync as readFileSync3 } from "fs";
-import { dirname as dirname2, resolve as resolve3 } from "path";
+import { existsSync as existsSync5, readFileSync as readFileSync4 } from "fs";
+import { dirname as dirname3, resolve as resolve5 } from "path";
 import { fileURLToPath as fileURLToPath2 } from "url";
 import { findSchemaByObject, validateDocument } from "skill-family-contracts";
 var REGISTRY_PROVIDER_ID = "agent-method-registry";
@@ -2246,15 +2782,15 @@ var REGISTRY_CONCLUSION_CODES = [
 ];
 var CORE_CHECK_IDS = /* @__PURE__ */ new Set(["schema", "merge", "freshness", "provider"]);
 function readPackageVersion() {
-  const start = dirname2(fileURLToPath2(import.meta.url));
+  const start = dirname3(fileURLToPath2(import.meta.url));
   const candidates = [
-    resolve3(start, "../../package.json"),
-    resolve3(start, "../package.json")
+    resolve5(start, "../../package.json"),
+    resolve5(start, "../package.json")
   ];
   let dir = start;
   for (let i = 0; i < 10; i++) {
-    candidates.push(resolve3(dir, "package.json"));
-    const parent = dirname2(dir);
+    candidates.push(resolve5(dir, "package.json"));
+    const parent = dirname3(dir);
     if (parent === dir) break;
     dir = parent;
   }
@@ -2262,9 +2798,9 @@ function readPackageVersion() {
   for (const candidate of candidates) {
     if (seen.has(candidate)) continue;
     seen.add(candidate);
-    if (!existsSync3(candidate)) continue;
+    if (!existsSync5(candidate)) continue;
     try {
-      const pkg = JSON.parse(readFileSync3(candidate, "utf8"));
+      const pkg = JSON.parse(readFileSync4(candidate, "utf8"));
       if (pkg.name === "agent-method-registry" && typeof pkg.version === "string" && pkg.version.length > 0) {
         return pkg.version;
       }
@@ -2816,9 +3352,11 @@ function runV2ProjectionCheck(input) {
     );
     if (!inventoryEntry) {
       diags.push(makeDiagnostic("LOCK_INCONSISTENCY", "error", "Run lock provider is missing from current inventory"));
+    } else if (!isSupportedHost(inventoryEntry.host)) {
+      diags.push(makeDiagnostic("PROVIDER_REJECTED", "error", `Inventory entry host "${inventoryEntry.host}" is not a supported host`));
     } else {
       const reverify = verifyProvider({
-        host: inventoryEntry.host === "claude-code" ? "claude-code" : "codex",
+        host: inventoryEntry.host,
         runLock: { ...lock, inventoryEntry }
       });
       if (reverify.status !== "verified") diags.push(...reverify.diagnostics);
@@ -3054,6 +3592,7 @@ var PreparedMethodQueryHandle = class _PreparedMethodQueryHandle {
     if (!_PreparedMethodQueryHandle.#constructing) throw new TypeError("illegal prepared-query handle construction");
     this.#payload = payload;
   }
+  // @feature AMR2 @scenario S-03
   /** Return a detached diagnostic snapshot, never the authority payload. */
   data() {
     return deepFreeze(cloneStrictJsonData(this.#payload));
@@ -3906,7 +4445,7 @@ function resolveV2Entry(projection, ref, host, preparedQueryHandle, serviceIdent
   if (!selectedCandidate.provider || !selectedCandidate.conformanceAttestation) {
     return { ok: false, diagnostics: [diag4("PROVIDER_UNVERIFIED", `Selected provider evidence is incomplete for "${ref}"`)] };
   }
-  if (selectedCandidate.provider.host !== host) {
+  if (!isSupportedHost(host) || !hostsMatch(selectedCandidate.provider.host, host)) {
     return {
       ok: false,
       diagnostics: [diag4("HOST_MISMATCH", `Resolve host "${host}" does not match selected provider host "${selectedCandidate.provider.host}" for "${ref}"`)]
@@ -3966,9 +4505,19 @@ function resolveV2Entry(projection, ref, host, preparedQueryHandle, serviceIdent
 
 export {
   computeContentHash,
+  validateServiceIdFamily,
   validateCatalog,
   validateProjectOverlay,
   validateEffectiveIndex,
+  generateMigrationPlan,
+  validateTransactionPath,
+  applyMigrationPlan,
+  rollbackMigration,
+  SUPPORTED_HOST_LIST,
+  isSupportedHost,
+  normalizeHostId,
+  formatSupportedHosts,
+  discoverDefaultAntigravityRoots,
   verifyProvider,
   buildEffectiveIndex,
   REGISTRY_PROVIDER_ID,

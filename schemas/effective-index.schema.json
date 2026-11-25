@@ -1,24 +1,27 @@
 {
   "title": "Effective Index",
-  "description": "JSON Schema for an effective index in the agent-method-registry protocol",
+  "description": "agent-method-registry v1 有效索引 Schema：由多份插件目录与项目覆盖配置确定性合并生成，记录输入内容摘要、生效条目及已停用墓碑条目。",
   "type": "object",
   "additionalProperties": false,
   "required": ["schemaVersion", "inputs", "entries", "disabledEntries"],
   "properties": {
     "schemaVersion": {
-      "const": 1
+      "const": 1,
+      "description": "v1 有效索引协议版本号，固定为 1。"
     },
     "inputs": {
       "$ref": "#/$defs/inputs"
     },
     "entries": {
       "type": "array",
+      "description": "合并与覆盖后当前生效的方法条目列表，按逻辑 ref 字典序稳定排列。",
       "items": {
         "$ref": "#/$defs/effectiveEntry"
       }
     },
     "disabledEntries": {
       "type": "array",
+      "description": "被项目配置显式停用的方法墓碑列表，用于在解析时返回明确的 ENTRY_DISABLED 诊断。",
       "items": {
         "$ref": "#/$defs/disabledEntry"
       }
@@ -27,28 +30,32 @@
   "$defs": {
     "contentHash": {
       "type": "string",
-      "pattern": "^sha256:[0-9a-f]{64}$"
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "基于 canonical-json-v1 规范化序列化计算的 SHA-256 内容摘要。"
     },
     "pluginProvider": {
       "type": "object",
       "additionalProperties": false,
+      "description": "插件作用域的提供方定位信息。",
       "required": ["scope", "plugin", "skill"],
       "properties": {
-        "scope": { "const": "plugin" },
-        "plugin": { "type": "string", "minLength": 1 },
-        "skill": { "type": "string", "minLength": 1 }
+        "scope": { "const": "plugin", "description": "插件提供方作用域标识。" },
+        "plugin": { "type": "string", "minLength": 1, "description": "提供该技能的插件标识。" },
+        "skill": { "type": "string", "minLength": 1, "description": "插件根目录下的技能相对路径。" }
       }
     },
     "projectProvider": {
       "type": "object",
       "additionalProperties": false,
+      "description": "项目本地或覆盖后的提供方定位信息。",
       "required": ["scope", "skill"],
       "properties": {
-        "scope": { "const": "project" },
-        "skill": { "type": "string", "minLength": 1 }
+        "scope": { "const": "project", "description": "项目本地提供方作用域标识。" },
+        "skill": { "type": "string", "minLength": 1, "description": "项目根目录下的技能相对路径。" }
       }
     },
     "provider": {
+      "description": "方法条目的实际提供方（插件默认提供方或项目级覆盖提供方）。",
       "oneOf": [
         { "$ref": "#/$defs/pluginProvider" },
         { "$ref": "#/$defs/projectProvider" }
@@ -57,30 +64,35 @@
     "match": {
       "type": "object",
       "additionalProperties": false,
+      "description": "供 queryEffectiveIndex 过滤使用的领域、制品类型与意图标签。",
       "required": ["domains", "artifactTypes", "intents"],
       "properties": {
         "domains": {
           "type": "array",
           "items": { "type": "string", "minLength": 1 },
           "minItems": 1,
-          "uniqueItems": true
+          "uniqueItems": true,
+          "description": "适用的业务或语言领域列表。"
         },
         "artifactTypes": {
           "type": "array",
           "items": { "type": "string", "minLength": 1 },
           "minItems": 1,
-          "uniqueItems": true
+          "uniqueItems": true,
+          "description": "适用的目标制品类型列表。"
         },
         "intents": {
           "type": "array",
           "items": { "type": "string", "minLength": 1 },
           "minItems": 1,
-          "uniqueItems": true
+          "uniqueItems": true,
+          "description": "支持的任务意图列表。"
         }
       }
     },
     "sideEffects": {
       "type": "array",
+      "description": "方法的副作用等级声明。",
       "items": {
         "type": "string",
         "enum": ["read-only", "write-project-artifacts", "external-state-change"]
@@ -91,20 +103,23 @@
     "catalogInput": {
       "type": "object",
       "additionalProperties": false,
+      "description": "参与构建本索引的单份插件目录版本与内容摘要记录。",
       "required": ["id", "version", "contentHash"],
       "properties": {
-        "id": { "type": "string", "minLength": 1 },
-        "version": { "type": "string", "minLength": 1 },
+        "id": { "type": "string", "minLength": 1, "description": "插件目录 ID。" },
+        "version": { "type": "string", "minLength": 1, "description": "插件目录版本号。" },
         "contentHash": { "$ref": "#/$defs/contentHash" }
       }
     },
     "inputs": {
       "type": "object",
       "additionalProperties": false,
+      "description": "构建有效索引时的全部输入摘要指纹，供 freshness 检查核对源配置是否发生漂移。",
       "required": ["catalogs", "projectContentHash"],
       "properties": {
         "catalogs": {
           "type": "array",
+          "description": "按目录 ID 排序的插件目录摘要列表。",
           "items": { "$ref": "#/$defs/catalogInput" }
         },
         "projectContentHash": { "$ref": "#/$defs/contentHash" }
@@ -113,33 +128,37 @@
     "provenance": {
       "type": "object",
       "additionalProperties": false,
+      "description": "条目的定义来源与覆盖轨迹。",
       "required": ["sourceCatalog"],
       "properties": {
-        "sourceCatalog": { "type": "string", "minLength": 1 },
-        "overriddenBy": { "type": "string", "minLength": 1 }
+        "sourceCatalog": { "type": "string", "minLength": 1, "description": "最初定义该条目的插件目录 ID（项目自有条目为 project）。" },
+        "overriddenBy": { "type": "string", "minLength": 1, "description": "若条目被项目配置覆盖，记录覆盖来源标识。" }
       }
     },
     "effectiveEntry": {
       "type": "object",
       "additionalProperties": false,
+      "description": "合并后生效的单条方法定义及来源轨迹。",
       "required": ["ref", "provider", "kind", "summary", "match", "accepts", "produces", "sideEffects", "provenance"],
       "properties": {
-        "ref": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "ref": { "type": "string", "minLength": 1, "maxLength": 128, "description": "逻辑方法引用 ID。" },
         "provider": { "$ref": "#/$defs/provider" },
-        "kind": { "type": "string", "enum": ["workflow", "operation"] },
-        "summary": { "type": "string", "maxLength": 160 },
+        "kind": { "type": "string", "enum": ["workflow", "operation"], "description": "方法形态（workflow 或 operation）。" },
+        "summary": { "type": "string", "maxLength": 160, "description": "方法职责简述。" },
         "match": { "$ref": "#/$defs/match" },
         "accepts": {
           "type": "array",
           "items": { "type": "string", "minLength": 1 },
           "minItems": 1,
-          "uniqueItems": true
+          "uniqueItems": true,
+          "description": "输入材料标识列表。"
         },
         "produces": {
           "type": "array",
           "items": { "type": "string", "minLength": 1 },
           "minItems": 1,
-          "uniqueItems": true
+          "uniqueItems": true,
+          "description": "产出物标识列表。"
         },
         "sideEffects": { "$ref": "#/$defs/sideEffects" },
         "provenance": { "$ref": "#/$defs/provenance" }
@@ -148,12 +167,13 @@
     "disabledEntry": {
       "type": "object",
       "additionalProperties": false,
+      "description": "被显式停用的方法墓碑记录，保留原提供方与停用来源以便排障。",
       "required": ["ref", "provider", "sourceCatalog", "disabledBy"],
       "properties": {
-        "ref": { "type": "string", "minLength": 1 },
+        "ref": { "type": "string", "minLength": 1, "description": "被停用的逻辑方法引用 ID。" },
         "provider": { "$ref": "#/$defs/provider" },
-        "sourceCatalog": { "type": "string", "minLength": 1 },
-        "disabledBy": { "type": "string", "minLength": 1 }
+        "sourceCatalog": { "type": "string", "minLength": 1, "description": "原条目所属目录标识。" },
+        "disabledBy": { "type": "string", "minLength": 1, "description": "触发停用的配置文件标识（如 agent-methods.yaml）。" }
       }
     }
   }

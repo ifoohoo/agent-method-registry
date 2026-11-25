@@ -663,8 +663,11 @@ declare function queryEffectiveIndex(input: V1QueryInput): V1QueryResult;
 declare function queryEffectiveIndex(input: V2RecommendationQueryInput): RecommendationQueryResult;
 declare function queryEffectiveIndex(input: V2PrepareQueryInput): PrepareQueryResult;
 
+declare const SUPPORTED_HOST_LIST: readonly ["codex", "claude-code", "claude", "antigravity", "antigravity-ide", "agy", "kimi", "kimi-code", "qoder", "codebuddy", "workbuddy", "grok", "cursor", "deepseek-harness", "dsh"];
+type SupportedHost = (typeof SUPPORTED_HOST_LIST)[number];
+
 interface VerifyProviderV2Input {
-    host: 'claude-code' | 'codex';
+    host: SupportedHost;
     provider?: never;
     runLock?: never;
     pluginRoots?: never;
@@ -690,7 +693,7 @@ interface VerifyProviderV2Input {
     };
 }
 interface VerifyProviderRunLockInput {
-    host: 'claude-code' | 'codex';
+    host: SupportedHost;
     provider?: never;
     v2?: never;
     pluginRoots?: never;
@@ -700,7 +703,7 @@ interface VerifyProviderRunLockInput {
     };
 }
 interface VerifyProviderV1Input {
-    host?: 'claude-code' | 'codex';
+    host?: SupportedHost;
     pluginRoots?: Record<string, string[]>;
     projectRoots?: string[];
     provider: Provider;
@@ -737,7 +740,7 @@ declare function verifyProvider(input: VerifyProviderInput): VerifyProviderResul
 interface ResolveInput {
     index: EffectiveIndex | ProjectionData;
     ref: string;
-    host?: 'claude-code' | 'codex';
+    host?: SupportedHost;
     pluginRoots?: Record<string, string[]>;
     projectRoots?: string[];
     strictProvider?: boolean;
@@ -819,7 +822,7 @@ interface DiagnoseInput {
     catalogs: unknown[];
     project?: unknown;
     existingIndex?: EffectiveIndex;
-    host?: 'claude-code' | 'codex';
+    host?: SupportedHost;
     pluginRoots?: Record<string, string[]>;
     projectRoots?: string[];
     strictProvider?: boolean;
@@ -870,4 +873,4 @@ declare function diagnoseRegistry(input: ProfessionalScanInput): ProfessionalSca
 declare function diagnoseRegistry(input: DiagnoseInput): DiagnoseResult;
 declare function diagnoseRegistry(input: DiagnoseRegistryInput): DiagnoseRegistryResult;
 
-export { type ApiRecognition, type BindingConversion, type BindingData, type BuildEffectiveIndexInput, type BuildEffectiveIndexResult, type BuildEffectiveIndexV1Input, type BuildEffectiveIndexV1Result, type BuildEffectiveIndexV2Input, type BuildEffectiveIndexV2Result, type CatalogData, type CollisionReport, type CompactEntry, type Compatibility, type DiagnoseInput, type DiagnoseRegistryInput, type DiagnoseRegistryResult, type DiagnoseResult, Diagnostic, type DisabledEntry, type DoctorCheck, type EffectiveEntry, type EffectiveIndex, type Enablement, type Entry, type ExecutableRecommendationEntry, type ImplementationDescriptor, type Installation, type InventoryData, type InventoryEntry, type MethodQuery, type MethodQueryCandidate, type MigrationPlan, type NonExecutableRecommendationEntry, type Override, type PluginProvider, type PrepareQueryResult, PreparedMethodQueryHandle as PreparedQueryHandle, type ProfessionalConclusion, type ProfessionalScanInput, type ProfessionalScanResult, type ProjectBindingData, type ProjectOverlayData, type ProjectProvider, type ProjectionData, type ProjectionEntry, type Provider, type ProviderVerification, type QueryInput, type QueryResult, type ReadProofInput, type ReadProofResult, type RecommendationEntry, type RecommendationQueryResult, type Resolution, type ResolveInput, type ResolveResult, type RunMethodLock, type SchemaValidationResult, type SelectionSource, type SyntheticIdentity, type Trust, type V1QueryInput, type V1QueryResult, type V2PrepareQueryInput, type V2RecommendationQueryInput, type ValidateCatalogDocumentResult, type ValidateCatalogResult, type ValidateCatalogV1Result, type ValidateEffectiveIndexResult, type ValidateProjectOverlayDocumentResult, type ValidateProjectOverlayResult, type ValidateProjectOverlayV1Result, type VerifyProviderInput, type VerifyProviderResult, type VerifyProviderRunLockInput, type VerifyProviderV1Input, type VerifyProviderV2Input, buildEffectiveIndex, diagnoseRegistry, queryEffectiveIndex, resolveEntry, validateCatalog, validateProjectOverlay, verifyProvider };
+export { type ApiRecognition, type BindingConversion, type BindingData, type BuildEffectiveIndexInput, type BuildEffectiveIndexResult, type BuildEffectiveIndexV1Input, type BuildEffectiveIndexV1Result, type BuildEffectiveIndexV2Input, type BuildEffectiveIndexV2Result, type CatalogData, type CollisionReport, type CompactEntry, type Compatibility, type DiagnoseInput, type DiagnoseRegistryInput, type DiagnoseRegistryResult, type DiagnoseResult, Diagnostic, type DisabledEntry, type DoctorCheck, type EffectiveEntry, type EffectiveIndex, type Enablement, type Entry, type ExecutableRecommendationEntry, type ImplementationDescriptor, type Installation, type InventoryData, type InventoryEntry, type MethodQuery, type MethodQueryCandidate, type MigrationPlan, type NonExecutableRecommendationEntry, type Override, type PluginProvider, type PrepareQueryResult, PreparedMethodQueryHandle as PreparedQueryHandle, type ProfessionalConclusion, type ProfessionalScanInput, type ProfessionalScanResult, type ProjectBindingData, type ProjectOverlayData, type ProjectProvider, type ProjectionData, type ProjectionEntry, type Provider, type ProviderVerification, type QueryInput, type QueryResult, type ReadProofInput, type ReadProofResult, type RecommendationEntry, type RecommendationQueryResult, type Resolution, type ResolveInput, type ResolveResult, type RunMethodLock, type SchemaValidationResult, type SelectionSource, type SupportedHost, type SyntheticIdentity, type Trust, type V1QueryInput, type V1QueryResult, type V2PrepareQueryInput, type V2RecommendationQueryInput, type ValidateCatalogDocumentResult, type ValidateCatalogResult, type ValidateCatalogV1Result, type ValidateEffectiveIndexResult, type ValidateProjectOverlayDocumentResult, type ValidateProjectOverlayResult, type ValidateProjectOverlayV1Result, type VerifyProviderInput, type VerifyProviderResult, type VerifyProviderRunLockInput, type VerifyProviderV1Input, type VerifyProviderV2Input, buildEffectiveIndex, diagnoseRegistry, queryEffectiveIndex, resolveEntry, validateCatalog, validateProjectOverlay, verifyProvider };

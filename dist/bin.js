@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import {
   run
-} from "./chunk-33TDMLGQ.js";
-import "./chunk-5DQRT5MW.js";
+} from "./chunk-77MG2Y45.js";
+import "./chunk-B2A5J4XP.js";
 
 // src/bin.ts
 run(process.argv);

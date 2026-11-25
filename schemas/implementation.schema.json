@@ -1,6 +1,6 @@
 {
   "title": "Family Implementation Descriptor",
-  "description": "JSON Schema for a v2 family implementation descriptor in agent-method-registry",
+  "description": "agent-method-registry v2 技能族实现描述符 Schema：声明某个插件包或项目本地实现满足哪份 Family API、包含哪些服务技能、目录树摘要及合规证明。",
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "additionalProperties": false,
@@ -8,81 +8,84 @@
   "properties": {
     "documentKind": {
       "const": "v2-implementation",
-      "description": "Discriminator for v2 implementation descriptors; required when passing to validateCatalog"
+      "description": "v2 实现描述符文档判别字，传入 validateCatalog 时必须显式设为 v2-implementation。"
     },
     "schemaVersion": {
       "const": 2,
-      "description": "Must be 2 for v2 implementation descriptors"
+      "description": "协议版本号，v2 实现描述符固定为 2。"
     },
     "familyImplementationId": {
       "type": "string",
       "minLength": 1,
       "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9-]*)+$",
-      "description": "Reverse-domain family implementation identity (e.g., io.github.mzdbxqh.e2e-test)"
+      "description": "反向域名风格的技能族实现身份标识（如 io.github.ifoohoo.user-story）。"
     },
     "version": {
       "type": "string",
       "minLength": 1,
-      "description": "Semantic version of this family implementation"
+      "description": "本实现的语义化版本号，须与安装清单中的 version 对齐。"
     },
     "pluginId": {
       "type": "string",
       "minLength": 1,
-      "description": "Explicit plugin identity for exact inventory matching (must equal inventory entry pluginId)"
+      "description": "与可信安装清单精确配对的插件标识，须等于对应 inventoryEntry.pluginId。"
     },
     "projectAuthority": {
       "type": "string",
       "pattern": "^project\\.[a-z][a-z0-9-]*$",
-      "description": "Explicit project authority when lifecycle.ownership is project-local"
+      "description": "当 lifecycle.ownership 为 project-local 时必填的项目归属标识（如 project.acme）；非项目本地实现禁止填写。"
     },
     "implements": {
       "type": "object",
       "additionalProperties": false,
+      "description": "本实现所遵循的 Family API 契约身份及不可变修订摘要。",
       "required": ["apiId", "apiMajor", "apiRevisionDigest"],
       "properties": {
         "apiId": {
           "type": "string",
           "pattern": "^(?:artifact\\.[a-z][a-z0-9-]*-family|project\\.[a-z][a-z0-9-]*\\.[a-z][a-z0-9-]*-family|(?!(?:artifact|project)\\.)(?:[a-z][a-z0-9-]*\\.){2,}[a-z][a-z0-9-]*-family)$",
-          "description": "Family API identity (e.g., artifact.e2e-test-family)"
+          "description": "目标 Family API 标识，按前缀分为 STANDARD（artifact.*-family）、PROJECT（project.<auth>.*-family）与 THIRD_PARTY（反向域名）。"
         },
         "apiMajor": {
           "type": "integer",
           "minimum": 1,
-          "description": "Major version of the Family API being implemented"
+          "description": "实现的 Family API 主版本号（正整数）。"
         },
         "apiRevisionDigest": {
           "type": "string",
           "pattern": "^sha256:[a-f0-9]{64}$",
-          "description": "Immutable SHA-256 digest of the Family API revision being implemented"
+          "description": "实现的 Family API 修订版 SHA-256 摘要，投影与绑定阶段据此判定契约兼容性。"
         }
       }
     },
     "services": {
       "type": "object",
       "minProperties": 1,
+      "description": "由逻辑 serviceId 映射到具体服务实现标识与相对技能目录路径的声明表。",
       "additionalProperties": {
         "type": "object",
         "additionalProperties": false,
+        "description": "单个服务在该实现包内的身份与入口定位。",
         "required": ["serviceImplementationId", "skill"],
         "properties": {
           "serviceImplementationId": {
             "type": "string",
             "minLength": 1,
             "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9-]*)+$",
-            "description": "Reverse-domain service implementation identity"
+            "description": "反向域名风格的服务实现标识。"
           },
           "skill": {
             "type": "string",
             "minLength": 1,
-            "description": "Relative POSIX path to the skill directory/file"
+            "description": "相对于包根目录的 POSIX 技能目录路径（禁止包含 .. 或绝对路径）。"
           }
         }
-      },
-      "description": "Map of serviceId to service implementation declaration"
+      }
     },
     "bundle": {
       "type": "object",
       "additionalProperties": false,
+      "description": "参与文件树完整性校验的子目录集合与确定性摘要。",
       "required": ["roots", "treeDigest"],
       "properties": {
         "roots": {
@@ -90,68 +93,71 @@
           "items": { "type": "string", "minLength": 1 },
           "minItems": 1,
           "uniqueItems": true,
-          "description": "Root directories included in the bundle"
+          "description": "纳入内容摘要计算的相对根目录列表（如 skills、references）。"
         },
         "treeDigest": {
           "type": "string",
           "pattern": "^sha256:[a-f0-9]{64}$",
-          "description": "Deterministic SHA-256 digest of the bundle tree"
+          "description": "对 roots 下文件树计算出的确定性 SHA-256 摘要，执行前核验若发现磁盘内容漂移即拒绝放行。"
         }
       }
     },
     "lifecycle": {
       "type": "object",
       "additionalProperties": false,
+      "description": "实现的归属方式、成熟度与发布通道元信息。",
       "required": ["ownership", "maturity"],
       "properties": {
         "ownership": {
           "type": "string",
           "enum": ["bundled", "independent", "project-local"],
-          "description": "Who owns this implementation"
+          "description": "归属类型：随底座内置（bundled）、独立插件发布（independent）或当前项目私有实现（project-local）。"
         },
         "maturity": {
           "type": "string",
           "enum": ["experimental", "incubating", "stable", "deprecated"],
-          "description": "Maturity level of this implementation"
+          "description": "生命周期成熟度等级。"
         },
         "channel": {
           "type": "string",
           "enum": ["stable", "incubator"],
-          "description": "Release channel"
+          "description": "可选的发布渠道标记（stable 或 incubator）。"
         }
       }
     },
     "hostSupport": {
       "type": "object",
+      "description": "按宿主标识（如 codex、claude-code、antigravity［兼容 antigravity-ide / agy］、kimi、qoder、codebuddy、workbuddy、grok）声明的可用性与可选技能路径覆盖。",
       "additionalProperties": {
         "type": "object",
         "additionalProperties": false,
+        "description": "单个宿主下的可用开关与自定义技能相对路径。",
         "properties": {
-          "skillPath": { "type": "string", "minLength": 1 },
-          "available": { "type": "boolean" }
+          "skillPath": { "type": "string", "minLength": 1, "description": "该宿主专用的技能目录相对路径覆盖。" },
+          "available": { "type": "boolean", "description": "该宿主是否启用此实现；显式设为 false 时投影将该候选标为 REJECTED。" }
         }
-      },
-      "description": "Host-specific support declarations"
+      }
     },
     "conformance": {
       "type": "object",
       "additionalProperties": false,
+      "description": "实现的确定性符合性证明、行为资格证据及跨实现互操作 TCK 摘要。",
       "required": ["deterministicAttestation", "behaviorQualification"],
       "properties": {
         "deterministicAttestation": {
           "type": ["string", "null"],
           "pattern": "^sha256:[a-f0-9]{64}$",
-          "description": "SHA-256 digest of deterministic conformance attestation, or null if not yet attested"
+          "description": "确定性符合性测试证明的 SHA-256 摘要；尚未取证时为 null（不能通过正式绑定校验）。"
         },
         "behaviorQualification": {
           "type": ["string", "null"],
-          "description": "Path to behavior qualification evidence, or null if NOT_RUN"
+          "description": "行为资格验证报告路径或标识；未执行时为 null。"
         },
         "interopTckAttestations": {
           "type": "array",
           "uniqueItems": true,
           "items": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
-          "description": "Interop TCK result digests this implementation has passed"
+          "description": "本实现已通过的跨实现互操作测试套件（TCK）摘要列表，用于 mixSafe 服务级混绑校验。"
         }
       }
     }

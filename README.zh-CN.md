@@ -2,79 +2,45 @@
 
 [English](README.md)
 
-面向 agent 编码项目的确定性方法注册表：维护方法（技能/工作流）的规范目录，按文件系统验证解析提供者，并诊断注册表健康度。适用于 CLI 工具、Node 库和 CI 流水线的本地确定性使用。
+`agent-method-registry` 是面向智能体工程的本地确定性方法注册与核验工具。当多个技能插件与项目本地目录同时提供写作、评审、测试或发布工作流时，调用方不必在脚本里写死某个插件路径，只需按稳定的逻辑方法名向注册表查询或解析，即可在严格校验目录契约、项目覆盖、宿主身份与文件树摘要的前提下拿到唯一可信入口。
 
-## 它能做什么
+## 核心能力与协议分层
 
-- **v1（稳定）**：catalog/overlay 校验、effective index 构建与查询、provider 解析与文件系统验证、doctor 诊断。
-- **v2（0.2.0 起）**：技能族 SPI 的运行时侧——校验 implementation descriptor、依据可信 inventory 验证已安装 bundle、生成 capability projection、应用项目显式 binding、严格解析 Method Query，并产出与内容绑定的 run method lock。
+本包同时维护两代互补协议，公开包根始终锁定为 **7 个函数 + `ERROR_CODES`**，不因能力演进膨胀导出面：
 
-## 工作方式：一条确定的制品链
+- **v1 目录与覆盖协议**：面向轻量级跨插件方法分发（如 `humanize-rewrite`）。支持多插件目录（`catalog`）合并、项目级覆盖与显式停用（`agent-methods.yaml`）、按领域/制品/意图检索、多宿主 `SKILL.md` 物理路径核验，以及单项目能力安全解绑（`unbind`）。
+- **v2 技能族 SPI 与运行锁协议（自 `0.2.0` 起正式提供）**：面向多服务技能族的严密契约治理。将“Family API 契约 → 实现描述符（`v2-implementation`）→ 可信宿主安装清单（`v2-inventory`）→ 能力投影（`v2-projection`）→ 项目显式绑定（`v2-binding`）→ 标准方法查询（`Method Query`）→ 16 字段运行锁（`v2-run-lock`）”串联为单向可验证链路。
 
-v2 的运行时链路是单向的，每一环只消费上一环的权威产物：
+## 为什么采用严密的显式绑定与运行锁
 
-```text
-观察插件文件系统
-  → 可信 inventory（经权威 validator 校验的安装清单）
-  → capability projection（每个 service 的完整候选与六维状态）
-  → 项目显式 binding（五服务原子绑定）
-  → Method Query 严格解析（strict resolve）
-  → run method lock（16 个字段的内容锁）
-  → 执行前文件系统复验（reverify）
-```
+在实际多插件协作中，“磁盘上装了某个技能”远不代表“当前项目允许在当前宿主下直接调用它”。注册表在设计上坚持三条硬边界：
 
-对应到 API：
+1. **六维状态正交，拒绝隐式兜底**：安装（`INSTALLED`）、启用（`ENABLED`）、契约兼容（`COMPATIBLE`）、物理可信（`VERIFIED`）、解析唯一（`EXPLICIT_BINDING`）与项目绑定来源（`project-binding`）彼此独立。零个或多个合格候选一律报错阻断（fail-closed），绝不按“列表第一项”“最高版本号”或未声明的内置回退私自替用户做主。
+2. **统一可执行判别字 `executable`**：v2 推荐查询返回的每条记录都带有布尔字段 `executable`，由与 `prepare` 完全相同的六态门禁函数派生。`where-am-i` 等路由入口只需直接读取 `executable`，无需也不允许在外部重复拼装状态判断；仅安装而未显式绑定的唯一兼容候选（`UNIQUE_COMPATIBLE`）会如实展示在推荐列表中，但 `executable` 恒为 `false`。
+3. **多宿主身份隔离与执行前复验**：统一支持 `codex`、`claude-code`（兼容宿主别名 `claude`）、`antigravity`（兼容 `antigravity-ide` 与官方 CLI `agy`，原生覆盖 `.agents/skills`、`.agent/skills`、`~/.gemini/config/skills` 与 `~/.gemini/config/plugins/*/skills`）、`kimi`（兼容 Foundation 宿主标识 `kimi-code` 互认）、`qoder`、`codebuddy`、`workbuddy`、`grok`、`cursor` 与 `deepseek-harness`（兼容别名 `dsh`）。运行锁将宿主身份与技能文件树摘要一并封存；真正执行前调用 `verifyProvider` 复验，一旦跨宿主混用或磁盘文件发生篡改，立即返回 `HOST_MISMATCH` 或 `BUNDLE_DIGEST_MISMATCH`。
 
-1. `buildEffectiveIndex({ inventoryEntries, ... })` 把发现的安装事实变成经校验的 `preparedInventory` 和 projection；
-2. `queryEffectiveIndex({ methodQueryCandidate })` 做推荐（recommendation）或准备（prepare）；prepare 成功后签发进程本地的 `preparedQueryHandle`；
-3. `resolveEntry` 用句柄加精确 `serviceIdentity` 生成 `runMethodLock`；
-4. `verifyProvider` 在执行前重新核对文件系统，内容漂移即失败。
+### 技能族命名空间分类
 
-技能族无需复制 Registry 的摘要算法：候选事实进去，由 Registry 规范化、校验、签名的完整文档出来。
-
-## Family API 与 SPI 模型
-
-用 Java 作类比（仅限职责边界）：
-
-- Family API 类似 interface/API contract；
-- family implementation descriptor 类似 `implements` 声明；
-- trusted inventory、project binding 与 registry resolve 共同承担受约束 SPI/`ServiceLoader` 的职责；
-- 本包不是 JVM bytecode verifier，也不使用 Java classloader。
-
-身份分类与边界：Registry 把受支持的 ID 确定性分类为 `STANDARD`、`THIRD_PARTY` 或 `PROJECT`，并核对 API、service 与项目归属是否前后一致：
+注册表按前缀确定性区分三类 Family API 与服务身份，并核对整条链路上的项目归属一致性：
 
 ```text
-STANDARD     artifact.<family>-family
-             artifact.<family>.<service>
-
-THIRD_PARTY  <reverse-domain>.<family>-family
-             <reverse-domain>.<family>.<service>
-
-PROJECT      project.<authority>.<family>-family
-             project.<authority>.<family>.<service>
-             projectAuthority = project.<authority>
+STANDARD     artifact.<family>-family              → artifact.<family>.<service>
+THIRD_PARTY  <reverse-domain>.<family>-family      → <reverse-domain>.<family>.<service>
+PROJECT      project.<authority>.<family>-family   → project.<authority>.<family>.<service>
+             （项目私有实现须全程携带一致的 projectAuthority = project.<authority>）
 ```
 
-早期 v2 文档中保留 `-family` 的 service namespace（例如
-`artifact.<family>-family.<service>`）继续兼容；新文档应使用上面的规范写法。分类只能证明字符串和制品关系一致，不等于 authority 真实性认证。第三方域名归属和项目 authority 的来源证明仍由独立 attestation 协议负责。
+历史文档中服务名保留 `-family` 段（如 `artifact.<family>-family.<service>`）的写法继续兼容，新建实现统一采用去后缀的规范形式。命名空间分类用于校验结构与归属自洽，第三方域名所有权与项目权威签发由外部证明协议独立负责。
 
-## 三条关键规则
+## 安装与环境要求
 
-- **状态正交**：已安装不等于已启用、兼容、可信或唯一解析。零个或多个合格候选都 fail closed；Registry 不按 first-entry、最高版本或未声明的 builtin fallback 自动选择。
-- **`executable` 判别**：推荐条目携带 `executable` 布尔值，由与 prepare 相同的六状态门（INSTALLED、ENABLED、COMPATIBLE、VERIFIED、EXPLICIT_BINDING、project-binding）派生。`where-am-i` 等消费者只读这个布尔值，不重算六状态逻辑。`UNIQUE_COMPATIBLE` 条目会出现，但始终 `executable: false`。
-- **观察不等于信任**：`observed` 只是安全读取到的 realpath 与实际 bundle digest；显式 binding、conformance、authorization 和 provider re-verification 仍然 fail closed。
-
-在已配置项目内，`where-am-i` 是面向用户的入口：它把项目事实与 projection 结合，推荐下一步动作及应使用的技能。外层规划器若已有结构化 Method Query 可直接查询 Registry，但仍须提供调用方要求的 project-facts/context/proof/version-lock preflight 证据。
-
-## 安装
+运行环境要求 Node.js `>=22.0.0`。
 
 ```bash
 npm install agent-method-registry
 ```
 
-需要 Node.js `>=22.0.0`。
-
-## 快速开始
+## 公开 API（7 个根函数）
 
 ```javascript
 import {
@@ -85,32 +51,30 @@ import {
   resolveEntry,
   verifyProvider,
   diagnoseRegistry,
+  ERROR_CODES,
 } from 'agent-method-registry';
 ```
 
-## 公开 API
+| 函数 | 职责边界 |
+|------|----------|
+| `validateCatalog` | 校验 v1 插件目录，或带显式 `documentKind` 的 v2 实现描述符、安装清单、运行锁与迁移计划 |
+| `validateProjectOverlay` | 校验 v1 项目覆盖配置（`agent-methods.yaml`），或 v2 项目绑定与能力投影文档 |
+| `buildEffectiveIndex` | 构建确定性 v1 有效索引，或从候选安装事实与绑定生成 v2 能力投影及 `preparedInventory` |
+| `queryEffectiveIndex` | 按过滤条件查询 v1 索引；或在 v2 下执行只读推荐（`recommendation`）与签发进程内 `preparedQueryHandle`（`prepare`） |
+| `resolveEntry` | 解析 v1 方法入口并核验宿主根目录，或凭 `preparedQueryHandle` 执行 v2 严格解析并签发 `runMethodLock` |
+| `verifyProvider` | 对照真实文件系统核验 v1 `SKILL.md` 路径，或复验 v2 安装实例与运行锁的文件树摘要、软链接边界及宿主身份 |
+| `diagnoseRegistry` | 诊断目录、合并、新鲜度、提供方与 v2 投影健康度；通过 `mode: 'professional-scan' \| 'read-proof'` 兼任专业证明扫描与只读核验 |
 
-包根暴露恰好 **7 个函数**加 `ERROR_CODES` 和领域类型：
+公开 JSON Schema 可通过子路径直接引用（如 `agent-method-registry/schemas/inventory.schema.json`），包根保持 7 函数不变。
+### 专业证明扫描与只读核验
 
-| 函数 | 用途 |
-|------|------|
-| `validateCatalog` | 验证 v1 catalog 或带显式 discriminator 的 v2 implementation/inventory/run-lock/migration-plan 文档 |
-| `validateProjectOverlay` | 验证 v1 project overlay 或 v2 project binding/projection 文档 |
-| `buildEffectiveIndex` | 构建确定性 v1 index 或 v2 capability projection |
-| `queryEffectiveIndex` | 查询 v1 index、推荐 v2 服务，或准备一次已授权的 v2 执行 |
-| `resolveEntry` | 解析 v1 provider，或执行 v2 strict resolve 并生成 run method lock |
-| `verifyProvider` | 依据文件系统验证 v1 路径或 v2 inventory/bundle/run-lock 证据 |
-| `diagnoseRegistry` | 诊断 schema、projection、snapshot、binding、provider、lock 与 migration 健康度。同一函数还可做专业扫描或读取已有证明，不增加第八个根导出。 |
-
-TypeScript overload 在输入为 v1 文档时保留原有 v1 结果类型。公开 schema 通过 package subpath 定位（如 `agent-method-registry/schemas/implementation.schema.json`），不增加新的运行时函数。
-
-不带 `mode` 时，`diagnoseRegistry` 仍走原来的同步诊断。下面两种显式输入复用同一个函数：
+不传 `mode` 时，`diagnoseRegistry` 执行常规同步诊断；显式指定 `mode` 时复用同一入口完成 Foundation 专业结论对象（`skill-family.professional-conclusion`）的生成与核验：
 
 ```javascript
 const scanned = diagnoseRegistry({
   mode: 'professional-scan',
   subject: { ref: 'my-registry' },
-  request: { catalogs: [catalogData] }, // 现有 DiagnoseInput；不会从目录猜 catalog
+  request: { catalogs: [catalogData] }, // 仅检查显式传入的输入，不会扫描未知目录
 });
 
 const read = diagnoseRegistry({
@@ -120,111 +84,60 @@ const read = diagnoseRegistry({
 });
 ```
 
-上面的 `scanned` 走专业扫描，`read` 读取刚得到的证明。`professional-scan` 仍返回原来的 `ok`、`checks`、`diagnostics`，并附带共同 `conclusion`。
+`professional-scan` 的 `conclusion.outcome.code` 取值为：
+- `REGISTRY_CLEAR`：声明范围内的适用检查全部完成且无异常；
+- `REGISTRY_FINDINGS`：存在校验或核验错误；
+- `REGISTRY_CHECK_INCOMPLETE`：虽无报错，但部分必检项因缺少索引、宿主或根路径而处于 `unverified`；
+- `REGISTRY_CHECK_UNAVAILABLE`：输入请求不满足扫描前提。
 
-`outcome.code` 只有四个值：
+`read-proof` 只解析并核对既有证明对象本身，不读取外部目录、不重跑扫描，返回 `status: "pass" | "not_pass" | "unavailable"`。
 
-- `REGISTRY_CLEAR`：已选中且适用的检查全部通过
-- `REGISTRY_FINDINGS`：检查报告了失败
-- `REGISTRY_CHECK_INCOMPLETE`：没有失败，但含未完成或未验证项
-- `REGISTRY_CHECK_UNAVAILABLE`：无法开展检查
-
-`ok: true` 并不表示扫描完整。已选中检查若含未验证项，代码是 `REGISTRY_CHECK_INCOMPLETE`。可选 v2 检查只在提供 `request.v2` 时进入声明范围。
-
-`read-proof` 只消费已经解析好的证明对象，不读文件、不重跑诊断、不执行已登记方法。成功读取返回 `status: "pass" | "not_pass" | "unavailable"`，原结论保持不变。
-
-### v2 生产者流程
-
-```javascript
-const projection = buildEffectiveIndex({
-  familyApi,
-  implementations,
-  inventoryEntries: discoveredInstallations, // 非空数组
-  bindings,
-});
-
-const query = queryEffectiveIndex({
-  index: projection.index,
-  purpose: 'prepare', // 只读发现使用 'recommendation'
-  methodQueryCandidate: {
-    mode: 'standard',
-    intent: 'author',
-    kind: 'workflow',
-    projectFactsEvidence,
-    authorization,
-  },
-});
-```
-
-要点：
-
-- `methodQueryCandidate` 恰好五个顶层字段；Registry 先验证 `projectFactsEvidence` envelope 的内容摘要，再派生 target artifact、contract revision、candidate services 与 query digest。
-- 推荐结果只暴露 provider 状态元数据，绝不含句柄；只有 prepare 同时证明已安装、已启用、兼容、可信、项目显式绑定和授权后，才签发进程内 `preparedQueryHandle`。
-- `executable: true` 时条目的六个状态字段为唯一可执行组合；`false` 时报告实际状态。该标志与 prepare 门由 Registry 内部同一函数派生，调用方不得重算。
-
-## CLI
+## 命令行用法（CLI）
 
 ```bash
-# 验证目录文件
-agent-method-registry validate --catalog catalog.yaml --project overlay.yaml
+# 1. 查看只读帮助与受支持宿主列表
+agent-method-registry --help
 
-# 构建有效索引
-agent-method-registry index --catalog catalog.yaml --out index.json
+# 2. 校验插件目录与项目覆盖配置
+agent-method-registry validate --catalog catalog.yaml --project agent-methods.yaml
 
-# 查询索引
-agent-method-registry query --index index.json
-agent-method-registry query --index index.json --domain artifact --kind workflow
+# 3. 构建有效索引并按条件查询
+agent-method-registry index --catalog catalog.yaml --project agent-methods.yaml --out index.json
+agent-method-registry query --index index.json --domain zh-CN --intent rewrite
 
-# v2 推荐查询：candidate 是唯一查询来源，结果不含句柄
-agent-method-registry query --index projection.json --candidate candidate.json
+# 4. 按目标宿主解析方法入口（支持 codex / claude-code［兼容 claude］/ antigravity / kimi［兼容 kimi-code］/ qoder / codebuddy / workbuddy / grok / cursor / deepseek-harness［兼容 dsh］）
+agent-method-registry resolve --index index.json --ref humanize-rewrite \
+  --host antigravity --plugin-root /absolute/plugin/path
 
-# 解析特定条目
-agent-method-registry resolve --index index.json --ref my-plugin.entity.author --host claude-code --plugin-root ./plugins/my-plugin
+# 5. 在单个项目中安全解绑某个方法覆盖或绑定（校验剩余配置合法、清理悬空引用，重复执行幂等）
+agent-method-registry unbind humanize-rewrite --project agent-methods.yaml --catalog catalog.yaml
 
-# 预览 v1→v2 迁移；apply 前必须审阅 plan 与 collision
-agent-method-registry migrate --catalog catalog.yaml --project project.yaml \
-  --migration-context migration-context.json --dry-run --out-plan migration-plan.json \
-  --transaction-root .
+# 6. 预览 v1→v2 迁移计划（apply 前须人工核对映射与冲突报告）
+agent-method-registry migrate --catalog catalog.yaml --project agent-methods.yaml \
+  --migration-context migration-context.json --dry-run --out-plan migration-plan.json --transaction-root .
 
-# 专业扫描：--input 是相对于 --input-root 的 DiagnoseInput JSON
-agent-method-registry diagnose --mode professional-scan \
-  --input-root . --input diagnose-request.json --subject my-registry
-
-# 可选的排他证明写入；路径必须是绝对路径，且目标不能已存在
+# 7. 执行专业扫描并排他写入证明文件，随后只读核验该证明
 agent-method-registry diagnose --mode professional-scan \
   --input-root . --input diagnose-request.json --subject my-registry \
   --conclusion-output /absolute/path/conclusion.json
-
-# 读取一份 Registry 专业结论；路径相对于 --proof-root
-agent-method-registry diagnose --mode read-proof \
-  --proof-root . --proof conclusion.json
+agent-method-registry diagnose --mode read-proof --proof-root . --proof conclusion.json
 ```
 
-v1 catalog/overlay/query/resolve 协议继续兼容。v2 migration 提供显式 dry-run、apply 与基于 snapshot 的 rollback；rollback 写入前会验证每个目标仍与 apply 产物逐字节一致，apply 后的任何用户改动都会让整次恢复在零写入状态下失败。
+所有 CLI 子命令均在标准输出返回单行结构化 JSON 信封 `{ "ok": boolean, "data": ..., "diagnostics": [...] }`：
+- 退出码 `0`：执行成功（含 `query` 无匹配记录及 `unbind` 目标原本未绑定的幂等成功）；
+- 退出码 `1`：配置校验失败、提供方缺失/冲突、发现漂移或证明未通过（`not_pass`）；
+- 退出码 `2`：命令行参数缺失、未知标志或无法解析的外部证明。
 
-所有 CLI 命令向 stdout 输出单个 JSON 信封：
-
-```json
-{
-  "ok": true,
-  "data": { "..." },
-  "diagnostics": []
-}
-```
-
-退出码：`0` = 成功，`1` = 数据/索引/条目错误，`2` = 格式错误的调用。
-`diagnose --mode read-proof` 按共同读取映射：`pass` 退出 0，`not_pass` 退出 1，无法读取或非本族证明退出 2。`diagnose --mode professional-scan` 只在 `REGISTRY_CLEAR` 时退出 0；发现项、不完整和无法检查都退出 1。
-
-## 安全边界
+## 安全与写入边界
 
 <!-- release-skill:capability:safe-first-command -->
-安全的第一条命令是 `agent-method-registry --help`：只读、不写任何文件。`validate`、`query`、`resolve`、`diagnose` 只读取命令行点名的输入，不执行已登记方法。`diagnose` 只在指定 `--conclusion-output` 时写文件。
+首次验证安装时，可直接运行 `agent-method-registry --help`：该命令完全只读，不写入任何文件，也不触发网络请求。`validate`、`query`、`resolve` 与不带输出参数的 `diagnose` 仅读取命令行显式传入的文件，绝不执行目录中登记的任何外部技能脚本。
 
 <!-- release-skill:capability:external-write-boundary -->
-外部写入边界：本包是确定性的本地工具，不发起网络请求、不做任何外部写入。唯一的文件写入来自显式指定的参数：`--out`（索引）、`--out-plan`（迁移计划）、`--conclusion-output`（新建专业结论，不覆盖已有文件），以及限制在 `--transaction-root` 内的 migration `--apply`。
+外部写入边界：本包完全在本地确定性运行，零网络调用、零远端状态变更。仅当命令行显式传入以下参数时才会在本地落盘：`index --out`（写出有效索引）、`unbind`（在不带 `--dry-run` 时更新指定的项目配置或清理已清空的 v2 绑定文件）、`diagnose --conclusion-output`（排他新建证明文件，绝不覆盖已有文件），以及限定在 `--transaction-root` 目录树内的 `migrate --out-plan` / `--apply` / `--rollback`。
 
 ## 许可证
 
 [Apache-2.0](LICENSE)
 
-本项目由广州市风荷科技有限公司与 `agent-method-registry` contributors 共同维护，归属信息见 [NOTICE](NOTICE)。
+本项目由广州市风荷科技有限公司与 `agent-method-registry` 贡献者共同维护，归属声明见 [NOTICE](NOTICE)。
